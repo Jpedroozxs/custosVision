@@ -1,0 +1,17 @@
+{
+  "name": "Custos Vision",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node server.js",
+    "test": "node server.js"
+  },
+  "keywords": [],
+  "author": "João, Geovanni e Paulo",
+  "license": "MIT",
+  "description": "Projeto sobre sistema financeiro que pode ajudar milhares de brasileiros a conquistar a sua independência financeira",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}
