@@ -5,7 +5,7 @@ dotenv.config();
 const pool = mysql.createPool({
     connectionLimit: process.env.DB_CONNECTION_LIMIT,
     host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER,
+    user: process.env.DB_USER || 'root', 
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'CustosVision'
 });
@@ -19,4 +19,4 @@ pool.getConnection((err, connection) => {
     connection.release(); // Libera a conexão de volta para o pool
 });
 
-module.exports = pool;
+module.exports={pool};
