@@ -36,4 +36,4 @@ class UpdateDespesaDTO {
     }
 }
 
-module.exports = { ResponseDespesaDTO, CriarDespesaDTO, UpdateDespesaDTO };
+export default { ResponseDespesaDTO, CriarDespesaDTO, UpdateDespesaDTO };
