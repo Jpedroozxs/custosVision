@@ -12,6 +12,7 @@
   "description": "Projeto sobre sistema financeiro que pode ajudar milhares de brasileiros a conquistar a sua independência financeira",
   "dependencies": {
     "dotenv": "^17.4.2",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "mysql2": "^3.24.4"
   }
 }

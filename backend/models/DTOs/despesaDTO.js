@@ -1,13 +1,39 @@
-class DespesaDTO {
-    constructor(dados) {
-        this.descricao = dados.descricao;
-        this.tipo_despesa = dados.tipo_despesa;
-        this.periodicidade = dados.periodicidade;
-        this.datas = dados.datas;
-        this.valor = dados.valor;
-        this.id_usuario = dados.id_usuario;
-        this.id_categoria = dados.id_categoria;
+class ResponseDespesaDTO {
+    constructor(id, descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
+        this.id = id;
+        this.descricao = descricao;
+        this.tipoDespesa = tipoDespesa;
+        this.periodicidade = periodicidade;
+        this.datas = datas;
+        this.valor = valor;
+        this.idUsuario = idUsuario;
+        this.idCategoria = idCategoria;
     }
 }
 
-module.exports = DespesaDTO;
+class CriarDespesaDTO {
+    constructor(descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
+        this.descricao = descricao;
+        this.tipoDespesa = tipoDespesa;
+        this.periodicidade = periodicidade;
+        this.datas = datas;
+        this.valor = valor;
+        this.idUsuario = idUsuario;
+        this.idCategoria = idCategoria;
+    }
+}
+
+class UpdateDespesaDTO {
+    constructor(id, descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
+        this.id = id;
+        this.descricao = descricao;
+        this.tipoDespesa = tipoDespesa;
+        this.periodicidade = periodicidade;
+        this.datas = datas;
+        this.valor = valor;
+        this.idUsuario = idUsuario;
+        this.idCategoria = idCategoria;
+    }
+}
+
+module.exports = { ResponseDespesaDTO, CriarDespesaDTO, UpdateDespesaDTO };

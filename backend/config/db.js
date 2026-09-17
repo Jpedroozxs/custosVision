@@ -1,4 +1,4 @@
-const mysql = require('mysql2/promise');
+import mysql from 'mysql2/promise';
 const dotenv = require('dotenv');
 dotenv.config(); 
 
@@ -7,7 +7,7 @@ const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root', 
     password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'CustosVision'
+    database: process.env.DB_NAME || 'custusvision'
 });
 
 pool.getConnection((err, connection) => {
@@ -19,4 +19,4 @@ pool.getConnection((err, connection) => {
     connection.release(); // Libera a conexão de volta para o pool
 });
 
-module.exports={pool};
+module.exports= pool;
