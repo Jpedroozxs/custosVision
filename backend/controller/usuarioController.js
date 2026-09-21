@@ -1,101 +1,69 @@
-const usuarioModels = require("../models/usuarioModels");
+const usuarioModels = require('../infrastructure/usuarioModels');
+const { UsuarioDTO, UsuarioRespostaDTO } = require('../models/DTOs/usuarioDTO');
 
-const {UsuarioDTO, UsuarioRespostaDTO} = require("../models/DTOs/usuarioDTO");
-
-
-// Função para listar todos os usuários
-async function listarUsuarios(req, res) {
-
+async function listar(req, res) {
     try {
-
         const usuarios = await usuarioModels.listarUsuarios();
-
-        const usuariosDTO = usuarios.map(
-            usuario => new UsuarioRespostaDTO(usuario)
-        );
-
-        res.status(200).json(usuariosDTO);
-
-    } catch (error) {
-
-        console.error("Erro ao listar usuários:", error);
-
-        res.status(500).json({
-            error: "Erro ao listar usuários"
-        });
+        return res.json(usuarios.map(u => new UsuarioRespostaDTO(u)));
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ erro: 'Erro ao listar usuários.' });
     }
 }
 
-
-// Função para buscar um usuário por ID
-async function buscarUsuarioPorId(req, res) {
-
-    const { id } = req.params;
-
+async function buscarPorId(req, res) {
     try {
-
-        const usuario = await usuarioModels.buscarPorId(id);
-
+        const usuario = await usuarioModels.buscarPorId(req.params.id);
         if (!usuario) {
-
-            return res.status(404).json({
-                error: "Usuário não encontrado"
-            });
+            return res.status(404).json({ erro: 'Usuário não encontrado.' });
         }
-
-        const usuarioDTOFormatado =
-            new UsuarioRespostaDTO(usuario);
-
-        res.status(200).json(usuarioDTOFormatado);
-
-    } catch (error) {
-
-        console.error("Erro ao buscar usuário:", error);
-
-        res.status(500).json({
-            error: "Erro ao buscar usuário"
-        });
+        return res.json(new UsuarioRespostaDTO(usuario));
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ erro: 'Erro ao buscar usuário.' });
     }
 }
 
-
-// Função para criar um novo usuário
-async function criarUsuario(req, res) {
-
+async function cadastrar(req, res) {
     try {
-
-        // DTO organiza os dados recebidos
-        const novoUsuario = new UsuarioDTO(req.body);
-
-        // Model cadastra no banco
-        const usuarioCriado =
-            await usuarioModels.cadastrarUsuario(novoUsuario);
-
-        if (!usuarioCriado) {
-
-            return res.status(400).json({
-                error: "Não foi possível cadastrar o usuário"
-            });
+        const dto = new UsuarioDTO(req.body);
+        const sucesso = await usuarioModels.cadastrarUsuario(dto);
+        if (!sucesso) {
+            return res.status(400).json({ erro: 'Não foi possível cadastrar o usuário.' });
         }
-
-        res.status(201).json({
-            mensagem: "Usuário cadastrado com sucesso"
-        });
-
-    } catch (error) {
-
-        console.error("Erro ao criar usuário:", error);
-
-        res.status(500).json({
-            error: "Erro ao criar usuário"
-        });
+        const usuario = await usuarioModels.buscarPorEmail(dto.email);
+        return res.status(201).json(new UsuarioRespostaDTO(usuario));
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ erro: 'Erro ao cadastrar usuário.', detalhe: e.message });
     }
 }
 
+async function atualizar(req, res) {
+    try {
+        const sucesso = await usuarioModels.atualizarUsuario(req.params.id, req.body);
+        if (!sucesso) {
+            return res.status(404).json({ erro: 'Usuário não encontrado ou nenhum campo enviado.' });
+        }
+        const usuarioAtualizado = await usuarioModels.buscarPorId(req.params.id);
+        return res.json(new UsuarioRespostaDTO(usuarioAtualizado));
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ erro: 'Erro ao atualizar usuário.', detalhe: e.message });
+    }
+}
 
-// Exportando as funções
-module.exports = {
-    listarUsuarios,
-    buscarUsuarioPorId,
-    criarUsuario
-};
+async function deletar(req, res) {
+    try {
+        const sucesso = await usuarioModels.deletarUsuario(req.params.id);
+        if (!sucesso) {
+            return res.status(404).json({ erro: 'Usuário não encontrado.' });
+        }
+        return res.json({ mensagem: 'Usuário excluído com sucesso.' });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ erro: 'Erro ao excluir usuário.' });
+    }
+}
+
+module.exports = { listar, buscarPorId, cadastrar, atualizar, deletar };

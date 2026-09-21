@@ -1,63 +1,59 @@
-const pool = require('../config/database');
+const { pool } = require('../config/db');
 
-// Modelo para operações relacionadas à tabela 'aporte_meta'
-const AporteMetaModels = {
-    // Função para buscar todos os registros
-    buscarTodos: async () => {
-        try {
-            const query = 'SELECT * FROM aporte_meta';
-            const [rows] = await pool.query(query);
-            return rows;
-        } catch (error) {
-            throw error;
-        }
-    },
+async function listarTodos() {
+  const [rows] = await pool.query('SELECT * FROM aporte_meta ORDER BY id_aporte DESC');
+  return rows;
+}
 
-    // Função para buscar um registro pelo ID
-    buscarPorId: async (id) => {
-        try {
-            const query = 'SELECT * FROM aporte_meta WHERE id = ?';
-            const [rows] = await pool.query(query, [id]);
-            return rows[0];
-        } catch (error) {
-            throw error;
-        }
-    },
+async function buscarPorId(id) {
+  const [rows] = await pool.query('SELECT * FROM aporte_meta WHERE id_aporte = ?', [id]);
+  return rows[0];
+}
 
-    // Função para criar um novo registro
-    criar: async (dados) => {
-        try {
-            const query = 'INSERT INTO aporte_meta (campo1, campo2, campo3) VALUES (?, ?, ?)';
-            const { campo1, campo2, campo3 } = dados;
-            const [result] = await pool.query(query, [campo1, campo2, campo3]);
-            return result.insertId;
-        } catch (error) {
-            throw error;
-        }
-    },
+async function cadastrar(dados) {
+  const [result] = await pool.query(
+    'INSERT INTO aporte_meta (valor, datas, id_meta) VALUES (?, ?, ?)',
+    [dados.valor, dados.datas, dados.id_meta]
+  );
+  return buscarPorId(result.insertId);
+}
 
-    // Função para atualizar um registro existente
-    atualizar: async (id, dados) => {
-        try {
-            const query = 'UPDATE aporte_meta SET campo1 = ?, campo2 = ?, campo3 = ? WHERE id = ?';
-            const { campo1, campo2, campo3 } = dados;
-            const [result] = await pool.query(query, [campo1, campo2, campo3, id]);
-            return result.affectedRows > 0;
-        } catch (error) {
-            throw error;
-        }
-    },
+async function atualizar(id, dados) {
+  const campos = [];
+  const valores = [];
 
-    // Função para deletar um registro
-    deletar: async (id) => {
-        try {
-            const query = 'DELETE FROM aporte_meta WHERE id = ?';
-            const [result] = await pool.query(query, [id]);
-            return result.affectedRows > 0;
-        } catch (error) {
-            throw error;
-        }
-    },
+  if (dados.valor !== undefined) {
+    campos.push('valor = ?');
+    valores.push(dados.valor);
+  }
+  if (dados.datas !== undefined) {
+    campos.push('datas = ?');
+    valores.push(dados.datas);
+  }
+  if (dados.id_meta !== undefined) {
+    campos.push('id_meta = ?');
+    valores.push(dados.id_meta);
+  }
+
+  if (!campos.length) return buscarPorId(id);
+
+  valores.push(id);
+  const [result] = await pool.query(
+    `UPDATE aporte_meta SET ${campos.join(', ')} WHERE id_aporte = ?`,
+    valores
+  );
+  return result.affectedRows ? buscarPorId(id) : null;
+}
+
+async function deletar(id) {
+  const [result] = await pool.query('DELETE FROM aporte_meta WHERE id_aporte = ?', [id]);
+  return result.affectedRows > 0;
+}
+
+module.exports = {
+  listarTodos,
+  buscarPorId,
+  cadastrar,
+  atualizar,
+  deletar,
 };
-
-module.exports = AporteMetaModels;

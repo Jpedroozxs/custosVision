@@ -1,20 +1,17 @@
-const express = require("express");
-const despesaController = require("../controllers/despesaController");
-const routerDespesa = express.Router();
+const express=require('express');
+const controller=require('../controller/despesaController');
+const router=express.Router();
 
-// Listar todas as despesas.
-routerDespesa.get("/", despesaController.listarDespesas);
+router.get('/',controller.listar);
 
-// Buscar uma despesa específica pelo ID.
-routerDespesa.get("/:id", despesaController.buscarDespesaPorId);
+router.get('/:id',controller.buscarPorId);
 
-// Cadastrar uma nova despesa.
-routerDespesa.post("/", despesaController.cadastrarDespesa);
+router.post('/',controller.cadastrar);
 
-// Atualizar uma despesa pelo ID.
-routerDespesa.put("/:id", despesaController.atualizarDespesa);
+router.put('/:id',controller.atualizar);
 
-// Excluir uma despesa pelo ID.
-routerDespesa.delete("/:id", despesaController.deletarDespesa);
+router.patch('/:id',controller.atualizar);
 
-module.exports = routerDespesa;
+router.delete('/:id',controller.deletar);
+
+module.exports=router;

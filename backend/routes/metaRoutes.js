@@ -1,20 +1,17 @@
-const express = require("express");
-const metaController = require("../controllers/metaController");
-const routerMeta = express.Router();
+const express=require('express');
+const controller=require('../controller/metaController');
+const router=express.Router();
 
-// Listar todas as metas.
-routerMeta.get("/", metaController.listarMetas);
+router.get('/',controller.listar);
 
-// Buscar uma meta específica pelo ID.
-routerMeta.get("/:id", metaController.buscarMetaPorId);
+router.get('/:id',controller.buscarPorId);
 
-// Cadastrar uma nova meta.
-routerMeta.post("/", metaController.cadastrarMeta);
+router.post('/',controller.cadastrar);
 
-// Atualizar uma meta pelo ID.
-routerMeta.put("/:id", metaController.atualizarMeta);
+router.put('/:id',controller.atualizar);
 
-// Excluir uma meta pelo ID.
-routerMeta.delete("/:id", metaController.deletarMeta);
+router.patch('/:id',controller.atualizar);
 
-module.exports = routerMeta;
+router.delete('/:id',controller.deletar);
+
+module.exports=router;

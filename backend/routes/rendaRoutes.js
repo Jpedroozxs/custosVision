@@ -1,20 +1,17 @@
-const express = require("express");
-const rendaController = require("../controllers/rendaController");
-const routerRenda = express.Router();
+const express=require('express');
+const controller=require('../controller/rendaController');
+const router=express.Router();
 
-// Listar todas as rendas.
-routerRenda.get("/", rendaController.listarRendas);
+router.get('/',controller.listar);
 
-// Buscar uma renda específica pelo ID.
-routerRenda.get("/:id", rendaController.buscarRendaPorId);
+router.get('/:id',controller.buscarPorId);
 
-// Cadastrar uma nova renda.
-routerRenda.post("/", rendaController.cadastrarRenda);
+router.post('/',controller.cadastrar);
 
-// Atualizar uma renda pelo ID.
-routerRenda.put("/:id", rendaController.atualizarRenda);
+router.put('/:id',controller.atualizar);
 
-// Excluir uma renda pelo ID.
-routerRenda.delete("/:id", rendaController.deletarRenda);
+router.patch('/:id',controller.atualizar);
 
-module.exports = routerRenda;
+router.delete('/:id',controller.deletar);
+
+module.exports=router;

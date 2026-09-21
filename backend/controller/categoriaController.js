@@ -1,125 +1,33 @@
-const categoriaModel = require("../models/categoriaModels");
-const CategoriaDTO = require("../models/DTOs/categoriaDTO");
+const model = require('../infrastructure/categoriaModels');
+const { CriarCategoriaDTO, UpdateCategoriaDTO, ResponseCategoriaDTO } = require('../models/DTOs/categoriaDTO');
 
-// LISTAR TODAS
-async function listarTodas(req, res) {
+async function listar(req, res) {
     try {
-        const categorias = await categoriaModel.listarCategorias();
-
-        return res.status(200).json(categorias);
-
-    } catch (error) {
-        return res.status(500).json({
-            error: "Erro ao buscar categorias."
-        });
-    }
+        const rows =
+            await model.listarTodos(); return res.json(rows.map(x => new ResponseCategoriaDTO(x)));
+    } catch (error) { console.error(error); return res.status(500).json({ erro: 'Erro ao listar categorias.' }); }
 }
 
-// BUSCAR POR ID
 async function buscarPorId(req, res) {
-    try {
-        const { id } = req.params;
-
-        const categoria = await categoriaModel.buscarPorId(id);
-
-        if (!categoria) {
-            return res.status(404).json({
-                error: "Categoria não encontrada."
-            });
-        }
-
-        return res.status(200).json(categoria);
-
-    } catch (error) {
-        return res.status(500).json({
-            error: "Erro ao buscar categoria."
-        });
-    }
+    try { const row = await model.buscarPorId(req.params.id); if (!row) return res.status(404).json({ erro: 'Categoria não encontrado.' }); return res.json(new ResponseCategoriaDTO(row)); } catch (error) { console.error(error); return res.status(500).json({ erro: 'Erro ao buscar categoria.' }); }
 }
 
-// CRIAR
-async function criar(req, res) {
-    try {
-        const categoria = new CategoriaDTO(req.body);
-
-        const resultado = await categoriaModel.cadastrarCategoria(
-            categoria
-        );
-
-        if (!resultado) {
-            return res.status(400).json({
-                error: "Não foi possível cadastrar a categoria."
-            });
-        }
-
-        return res.status(201).json({
-            mensagem: "Categoria cadastrada com sucesso."
-        });
-
-    } catch (error) {
-        return res.status(500).json({
-            error: "Erro ao criar categoria."
-        });
-    }
+async function cadastrar(req, res) {
+    try { const row = await model.cadastrar(new CriarCategoriaDTO(req.body)); return res.status(201).json(new ResponseCategoriaDTO(row)); } catch (error) { console.error(error); return res.status(500).json({ erro: 'Erro ao cadastrar categoria.', detalhe: error.message }); }
 }
 
-// ATUALIZAR
 async function atualizar(req, res) {
     try {
-        const { id } = req.params;
-
-        const categoria = new CategoriaDTO(req.body);
-
-        const resultado = await categoriaModel.atualizarCategoria(
-            id,
-            categoria
-        );
-
-        if (!resultado) {
-            return res.status(404).json({
-                error: "Categoria não encontrada ou não atualizada."
-            });
-        }
-
-        return res.status(200).json({
-            mensagem: "Categoria atualizada com sucesso."
-        });
-
+        const row = await model.atualizar(req.params.id, new UpdateCategoriaDTO(req.body)); if (!row) return res.status(404).json({ erro: 'Categoria não encontrado.' }); return res.json(new ResponseCategoriaDTO(row));
     } catch (error) {
-        return res.status(500).json({
-            error: "Erro ao atualizar categoria."
-        });
+        console.error(error); return res.status(500).json({ erro: 'Erro ao atualizar categoria.', detalhe: error.message });
     }
 }
 
-// DELETAR
 async function deletar(req, res) {
     try {
-        const { id } = req.params;
-
-        const resultado = await categoriaModel.deletarCategoria(id);
-
-        if (!resultado) {
-            return res.status(404).json({
-                error: "Categoria não encontrada."
-            });
-        }
-
-        return res.status(200).json({
-            mensagem: "Categoria deletada com sucesso."
-        });
-
-    } catch (error) {
-        return res.status(500).json({
-            error: "Erro ao deletar categoria."
-        });
-    }
+        const ok = await model.deletar(req.params.id); if (!ok) return res.status(404).json({ erro: 'Categoria não encontrado.' }); return res.json({ mensagem: 'Categoria excluído com sucesso.' });
+    } catch (error) { console.error(error); return res.status(500).json({ erro: 'Erro ao excluir categoria.' }); }
 }
 
-module.exports = {
-    listarTodas,
-    buscarPorId,
-    criar,
-    atualizar,
-    deletar
-};
+module.exports = { listar, buscarPorId, cadastrar, atualizar, deletar };

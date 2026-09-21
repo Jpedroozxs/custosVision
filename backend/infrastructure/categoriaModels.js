@@ -1,76 +1,57 @@
-const pool = require('../config/database');
+const { pool } = require('../config/db');
 
-// Função para criar uma nova categoria
-async function criarCategoria(nome, descricao) {
-    try {
-        const query = 'INSERT INTO categorias (nome, descricao) VALUES (?, ?)';
-        const [result] = await pool.query(query, [nome, descricao]);
-        return { id: result.insertId, nome, descricao };
-    } catch (error) {
-        console.error('Erro ao criar categoria:', error);
-        throw error;
-    }
+async function listarTodos() {
+  const [rows] = await pool.query('SELECT * FROM categoria ORDER BY id_categoria DESC');
+  return rows;
 }
 
-// Função para buscar todas as categorias
-async function buscarCategorias() {
-    try {
-        const query = 'SELECT * FROM categorias';
-        const [categorias] = await pool.query(query);
-        return categorias;
-    } catch (error) {
-        console.error('Erro ao buscar categorias:', error);
-        throw error;
-    }
+async function buscarPorId(id) {
+  const [rows] = await pool.query('SELECT * FROM categoria WHERE id_categoria = ?', [id]);
+  return rows[0];
 }
 
-// Função para buscar uma categoria por ID
-async function buscarCategoriaPorId(id) {
-    try {
-        const query = 'SELECT * FROM categorias WHERE id = ?';
-        const [categorias] = await pool.query(query, [id]);
-        return categorias[0];
-    } catch (error) {
-        console.error('Erro ao buscar categoria por ID:', error);
-        throw error;
-    }
+async function cadastrar(dados) {
+  const [result] = await pool.query(
+    'INSERT INTO categoria (nome, id_usuario) VALUES (?, ?)',
+    [dados.nome, dados.id_usuario]
+  );
+  return buscarPorId(result.insertId);
 }
 
-// Função para atualizar uma categoria
-async function atualizarCategoria(id, dadosAtualizados) {
-    try {
-        const query = 'UPDATE categorias SET nome = ?, descricao = ? WHERE id = ?';
-        const { nome, descricao } = dadosAtualizados;
-        const [result] = await pool.query(query, [nome, descricao, id]);
-        if (result.affectedRows === 0) {
-            throw new Error('Categoria não encontrada');
-        }
-        return { id, nome, descricao };
-    } catch (error) {
-        console.error('Erro ao atualizar categoria:', error);
-        throw error;
-    }
+async function atualizar(id, dados) {
+  const campos = [];
+  const valores = [];
+
+  if (dados.nome !== undefined) {
+    campos.push('nome = ?');
+    valores.push(dados.nome);
+  }
+
+  if (dados.id_usuario !== undefined) {
+    campos.push('id_usuario = ?');
+    valores.push(dados.id_usuario);
+  }
+
+  if (!campos.length) return buscarPorId(id);
+
+  valores.push(id);
+  const [result] = await pool.query(
+    `UPDATE categoria SET ${campos.join(', ')} WHERE id_categoria = ?`,
+    valores
+  );
+
+  return result.affectedRows ? buscarPorId(id) : null;
 }
 
-// Função para deletar uma categoria
-async function deletarCategoria(id) {
-    try {
-        const query = 'DELETE FROM categorias WHERE id = ?';
-        const [result] = await pool.query(query, [id]);
-        if (result.affectedRows === 0) {
-            throw new Error('Categoria não encontrada');
-        }
-        return true;
-    } catch (error) {
-        console.error('Erro ao deletar categoria:', error);
-        throw error;
-    }
+async function deletar(id) {
+  const [result] = await pool.query('DELETE FROM categoria WHERE id_categoria = ?', [id]);
+  return result.affectedRows > 0;
 }
 
 module.exports = {
-    criarCategoria,
-    buscarCategorias,
-    buscarCategoriaPorId,
-    atualizarCategoria,
-    deletarCategoria,
+  listarTodos,
+  buscarPorId,
+  cadastrar,
+  atualizar,
+  deletar,
 };
