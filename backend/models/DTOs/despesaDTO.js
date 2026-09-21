@@ -1,39 +1,25 @@
-class ResponseDespesaDTO {
-    constructor(id, descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
-        this.id = id;
-        this.descricao = descricao;
-        this.tipoDespesa = tipoDespesa;
-        this.periodicidade = periodicidade;
-        this.datas = datas;
-        this.valor = valor;
-        this.idUsuario = idUsuario;
-        this.idCategoria = idCategoria;
-    }
-}
-
 class CriarDespesaDTO {
-    constructor(descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
-        this.descricao = descricao;
-        this.tipoDespesa = tipoDespesa;
-        this.periodicidade = periodicidade;
-        this.datas = datas;
-        this.valor = valor;
-        this.idUsuario = idUsuario;
-        this.idCategoria = idCategoria;
-    }
+  constructor(dados = {}) {
+    this.descricao = dados.descricao;
+    this.tipo_despesa = dados.tipo_despesa ?? dados.tipoDespesa;
+    this.periodicidade = dados.periodicidade;
+    this.datas = dados.datas;
+    this.valor = dados.valor;
+    this.id_usuario = dados.id_usuario ?? dados.idUsuario;
+    this.id_categoria = dados.id_categoria ?? dados.idCategoria ?? null;
+  }
 }
-
-class UpdateDespesaDTO {
-    constructor(id, descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
-        this.id = id;
-        this.descricao = descricao;
-        this.tipoDespesa = tipoDespesa;
-        this.periodicidade = periodicidade;
-        this.datas = datas;
-        this.valor = valor;
-        this.idUsuario = idUsuario;
-        this.idCategoria = idCategoria;
-    }
+class UpdateDespesaDTO extends CriarDespesaDTO {}
+class ResponseDespesaDTO {
+  constructor(dados = {}) {
+    this.id_despesa = dados.id_despesa;
+    this.descricao = dados.descricao;
+    this.tipo_despesa = dados.tipo_despesa;
+    this.periodicidade = dados.periodicidade;
+    this.datas = dados.datas;
+    this.valor = Number(dados.valor);
+    this.id_usuario = dados.id_usuario;
+    this.id_categoria = dados.id_categoria;
+  }
 }
-
-module.exports = { ResponseDespesaDTO, CriarDespesaDTO, UpdateDespesaDTO };
+module.exports = { CriarDespesaDTO, UpdateDespesaDTO, ResponseDespesaDTO };

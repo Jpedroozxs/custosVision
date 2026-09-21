@@ -1,118 +1,67 @@
-const { pool } = require("../config/db");
+const { pool } = require('../config/db');
 
-// LISTAR
-async function listarMetas() {
-    const [metas] = await pool.query(
-        "SELECT * FROM meta"
-    );
-
-    return metas;
+async function listarTodos() {
+  const [rows] = await pool.query('SELECT * FROM meta ORDER BY id_meta DESC');
+  return rows;
 }
 
-// BUSCAR POR ID
 async function buscarPorId(id) {
-    const [metas] = await pool.query(
-        "SELECT * FROM meta WHERE id_meta = ?",
-        [id]
-    );
-
-    return metas[0];
+  const [rows] = await pool.query('SELECT * FROM meta WHERE id_meta = ?', [id]);
+  return rows[0];
 }
 
-// CADASTRAR
-async function cadastrarMeta(meta) {
-    const [resposta] = await pool.query(
-        `INSERT INTO meta
-        (nome, valor_objetivo, prazo, status, id_usuario)
-        VALUES (?, ?, ?, ?, ?)`,
-        [
-            meta.nome,
-            meta.valor_objetivo,
-            meta.prazo,
-            meta.status,
-            meta.id_usuario
-        ]
-    );
-
-    return resposta.affectedRows > 0;
+async function cadastrar(dados) {
+  const [result] = await pool.query(
+    'INSERT INTO meta (nome, valor_objetivo, prazo, status, id_usuario) VALUES (?, ?, ?, ?, ?)',
+    [dados.nome, dados.valor_objetivo, dados.prazo, dados.status, dados.id_usuario]
+  );
+  return buscarPorId(result.insertId);
 }
 
-// DELETAR
-async function deletarMeta(id) {
-    const [resposta] = await pool.query(
-        "DELETE FROM meta WHERE id_meta = ?",
-        [id]
-    );
+async function atualizar(id, dados) {
+  const campos = [];
+  const valores = [];
 
-    return resposta.affectedRows > 0;
+  if (dados.nome !== undefined) {
+    campos.push('nome = ?');
+    valores.push(dados.nome);
+  }
+  if (dados.valor_objetivo !== undefined) {
+    campos.push('valor_objetivo = ?');
+    valores.push(dados.valor_objetivo);
+  }
+  if (dados.prazo !== undefined) {
+    campos.push('prazo = ?');
+    valores.push(dados.prazo);
+  }
+  if (dados.status !== undefined) {
+    campos.push('status = ?');
+    valores.push(dados.status);
+  }
+  if (dados.id_usuario !== undefined) {
+    campos.push('id_usuario = ?');
+    valores.push(dados.id_usuario);
+  }
+
+  if (!campos.length) return buscarPorId(id);
+
+  valores.push(id);
+  const [result] = await pool.query(
+    `UPDATE meta SET ${campos.join(', ')} WHERE id_meta = ?`,
+    valores
+  );
+  return result.affectedRows ? buscarPorId(id) : null;
 }
 
-// ATUALIZAR TUDO
-async function atualizacaoTotalMeta(id, meta) {
-    const [resposta] = await pool.query(
-        `UPDATE meta
-         SET nome = ?, valor_objetivo = ?, prazo = ?, status = ?
-         WHERE id_meta = ?`,
-        [
-            meta.nome,
-            meta.valor_objetivo,
-            meta.prazo,
-            meta.status,
-            id
-        ]
-    );
-
-    return resposta.affectedRows > 0;
-}
-
-// ATUALIZAÇÃO PARCIAL
-async function atualizarMeta(id, meta) {
-
-    let campos = [];
-    let valores = [];
-
-    if (meta.nome !== undefined) {
-        campos.push("nome = ?");
-        valores.push(meta.nome);
-    }
-
-    if (meta.valor_objetivo !== undefined) {
-        campos.push("valor_objetivo = ?");
-        valores.push(meta.valor_objetivo);
-    }
-
-    if (meta.prazo !== undefined) {
-        campos.push("prazo = ?");
-        valores.push(meta.prazo);
-    }
-
-    if (meta.status !== undefined) {
-        campos.push("status = ?");
-        valores.push(meta.status);
-    }
-
-    // Verifica se algum campo foi enviado
-    if (campos.length === 0) {
-        return false;
-    }
-
-    valores.push(id);
-
-    const [resposta] = await pool.query(
-        `UPDATE meta
-         SET ${campos.join(", ")}
-         WHERE id_meta = ?`,
-        valores
-    );
-
-    return resposta.affectedRows > 0;
+async function deletar(id) {
+  const [result] = await pool.query('DELETE FROM meta WHERE id_meta = ?', [id]);
+  return result.affectedRows > 0;
 }
 
 module.exports = {
-    listarMetas,
-    buscarPorId,
-    cadastrarMeta,
-    deletarMeta,
-    atualizacaoTotalMeta,
-    atualizarMeta
+  listarTodos,
+  buscarPorId,
+  cadastrar,
+  atualizar,
+  deletar,
 };

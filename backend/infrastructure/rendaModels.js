@@ -1,104 +1,71 @@
-const { pool } = require("../config/db");
+const { pool } = require('../config/db');
 
-// LISTAR
-async function listarRendas() {
-    const [rendas] = await pool.query(
-        "SELECT * FROM renda"
-    );
-
-    return rendas;
+async function listarTodos() {
+  const [rows] = await pool.query('SELECT * FROM renda ORDER BY id_renda DESC');
+  return rows;
 }
 
-// BUSCAR POR ID
 async function buscarPorId(id) {
-    const [rendas] = await pool.query(
-        "SELECT * FROM renda WHERE id_renda = ?",
-        [id]
-    );
-
-    return rendas[0];
+  const [rows] = await pool.query('SELECT * FROM renda WHERE id_renda = ?', [id]);
+  return rows[0];
 }
 
-// CADASTRAR
-async function cadastrarRenda(renda) {
-    const [resposta] = await pool.query(
-        `INSERT INTO renda
-        (descricao, valor, tipo_renda, periodicidade, datas, id_usuario)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-            renda.descricao,
-            renda.valor,
-            renda.tipo_renda,
-            renda.periodicidade,
-            renda.datas,
-            renda.id_usuario
-        ]
-    );
-
-    return resposta.affectedRows > 0;
+async function cadastrar(dados) {
+  const [result] = await pool.query(
+    'INSERT INTO renda (descricao, valor, tipo_renda, periodicidade, datas, id_usuario) VALUES (?, ?, ?, ?, ?, ?)',
+    [dados.descricao, dados.valor, dados.tipo_renda, dados.periodicidade, dados.datas, dados.id_usuario]
+  );
+  return buscarPorId(result.insertId);
 }
 
-// DELETAR
-async function deletarRenda(id) {
-    const [resposta] = await pool.query(
-        "DELETE FROM renda WHERE id_renda = ?",
-        [id]
-    );
+async function atualizar(id, dados) {
+  const campos = [];
+  const valores = [];
 
-    return resposta.affectedRows > 0;
+  if (dados.descricao !== undefined) {
+    campos.push('descricao = ?');
+    valores.push(dados.descricao);
+  }
+  if (dados.valor !== undefined) {
+    campos.push('valor = ?');
+    valores.push(dados.valor);
+  }
+  if (dados.tipo_renda !== undefined) {
+    campos.push('tipo_renda = ?');
+    valores.push(dados.tipo_renda);
+  }
+  if (dados.periodicidade !== undefined) {
+    campos.push('periodicidade = ?');
+    valores.push(dados.periodicidade);
+  }
+  if (dados.datas !== undefined) {
+    campos.push('datas = ?');
+    valores.push(dados.datas);
+  }
+  if (dados.id_usuario !== undefined) {
+    campos.push('id_usuario = ?');
+    valores.push(dados.id_usuario);
+  }
+
+  if (!campos.length) return buscarPorId(id);
+
+  valores.push(id);
+  const [result] = await pool.query(
+    `UPDATE renda SET ${campos.join(', ')} WHERE id_renda = ?`,
+    valores
+  );
+  return result.affectedRows ? buscarPorId(id) : null;
 }
 
-// ATUALIZAR
-async function atualizarRenda(id, renda) {
-
-    let campos = [];
-    let valores = [];
-
-    if (renda.descricao !== undefined) {
-        campos.push("descricao = ?");
-        valores.push(renda.descricao);
-    }
-
-    if (renda.valor !== undefined) {
-        campos.push("valor = ?");
-        valores.push(renda.valor);
-    }
-
-    if (renda.tipo_renda !== undefined) {
-        campos.push("tipo_renda = ?");
-        valores.push(renda.tipo_renda);
-    }
-
-    if (renda.periodicidade !== undefined) {
-        campos.push("periodicidade = ?");
-        valores.push(renda.periodicidade);
-    }
-
-    if (renda.datas !== undefined) {
-        campos.push("datas = ?");
-        valores.push(renda.datas);
-    }
-
-    if (campos.length === 0) {
-        return false;
-    }
-
-    valores.push(id);
-
-    const [resposta] = await pool.query(
-        `UPDATE renda
-         SET ${campos.join(", ")}
-         WHERE id_renda = ?`,
-        valores
-    );
-
-    return resposta.affectedRows > 0;
+async function deletar(id) {
+  const [result] = await pool.query('DELETE FROM renda WHERE id_renda = ?', [id]);
+  return result.affectedRows > 0;
 }
 
 module.exports = {
-    listarRendas,
-    buscarPorId,
-    cadastrarRenda,
-    deletarRenda,
-    atualizarRenda
+  listarTodos,
+  buscarPorId,
+  cadastrar,
+  atualizar,
+  deletar
 };

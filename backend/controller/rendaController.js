@@ -1,32 +1,57 @@
-const rendaModels = require("../models/rendaModels");
-const RendaDTO = require("../models/DTOs/rendaDTO");
+const model = require('../infrastructure/rendaModels');
+const { CriarRendaDTO, UpdateRendaDTO, ResponseRendaDTO } = require('../models/DTOs/rendaDTO');
 
-async function cadastrarRenda(req, res) {
+async function listar(req, res) {
     try {
-        // Transforma os dados recebidos em um DTO
-        const renda = new RendaDTO(req.body);
-
-        // Envia os dados organizados para o Model
-        const resultado = await rendaModels.cadastrarRenda(renda);
-
-        if (resultado) {
-            return res.status(201).json({
-                mensagem: "Renda cadastrada com sucesso"
-            });
-        }
-
-        return res.status(400).json({
-            mensagem: "Não foi possível cadastrar a renda"
-        });
-
+        const rows = await model.listarTodos();
+        return res.json(rows.map(x => new ResponseRendaDTO(x)));
     } catch (error) {
-        return res.status(500).json({
-            mensagem: "Erro ao cadastrar renda",
-            erro: error.message
-        });
+        console.error(error);
+        return res.status(500).json({ erro: 'Erro ao listar rendas.' });
     }
 }
 
-module.exports = {
-    cadastrarRenda
-};
+async function buscarPorId(req, res) {
+    try {
+        const row = await model.buscarPorId(req.params.id);
+        if (!row) return res.status(404).json({ erro: 'Renda não encontrado.' });
+        return res.json(new ResponseRendaDTO(row));
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ erro: 'Erro ao buscar renda.' });
+    }
+}
+
+async function cadastrar(req, res) {
+    try {
+        const row = await model.cadastrar(new CriarRendaDTO(req.body));
+        return res.status(201).json(new ResponseRendaDTO(row));
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ erro: 'Erro ao cadastrar renda.', detalhe: error.message });
+    }
+}
+
+async function atualizar(req, res) {
+    try {
+        const row = await model.atualizar(req.params.id, new UpdateRendaDTO(req.body));
+        if (!row) return res.status(404).json({ erro: 'Renda não encontrado.' });
+        return res.json(new ResponseRendaDTO(row));
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ erro: 'Erro ao atualizar renda.', detalhe: error.message });
+    }
+}
+
+async function deletar(req, res) {
+    try {
+        const ok = await model.deletar(req.params.id);
+        if (!ok) return res.status(404).json({ erro: 'Renda não encontrado.' });
+        return res.json({ mensagem: 'Renda excluído com sucesso.' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ erro: 'Erro ao excluir renda.' });
+    }
+}
+
+module.exports = { listar, buscarPorId, cadastrar, atualizar, deletar };

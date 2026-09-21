@@ -1,23 +1,17 @@
-const express = require('express');
-const usuarioController = require('../controllers/usuarioController');
-const routerUsuraio = express.Router();
+const express=require('express');
+const controller=require('../controller/usuarioController');
+const router=express.Router();
 
-// Listar todos os usuários.
-routerUsuraio.get("/", usuarioController.listarUsuarios);
+router.get('/',controller.listar);
 
-// Buscar usuário pelo ID.
-routerUsuraio.get("/:id", usuarioController.obterUsuarioPorId);
+router.get('/:id',controller.buscarPorId);
 
-// Cadastrar usuário.
-routerUsuraio.post("/", usuarioController.cadastrarUsuario);
+router.post('/',controller.cadastrar);
 
-// Atualizar todos os campos do usuário pelo ID.
-routerUsuraio.put("/:id", usuarioController.atualizacaoTotalUsuario);
+router.put('/:id',controller.atualizar);
 
-// Atualizar parcialmente os campos do usuário pelo ID.
-routerUsuraio.patch("/:id", usuarioController.atualizarUsuario);
+router.patch('/:id',controller.atualizar);
 
-// Deletar usuário pelo ID.
-routerUsuraio.delete("/:id", usuarioController.deletarUsuario);
+router.delete('/:id',controller.deletar);
 
-module.exports = routerUsuraio;
+module.exports=router;
