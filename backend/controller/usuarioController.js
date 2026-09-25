@@ -35,7 +35,31 @@ async function cadastrar(req, res) {
         return res.status(201).json(new UsuarioRespostaDTO(usuario));
     } catch (e) {
         console.error(e);
-        return res.status(500).json({ erro: 'Erro ao cadastrar usuário.', detalhe: e.message });
+        if (e.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ erro: 'Já existe uma conta cadastrada com este e-mail.' });
+        }
+        return res.status(500).json({ erro: 'Erro ao cadastrar usuário.' });
+    }
+}
+
+async function login(req, res) {
+    try {
+        const email = String(req.body?.email || '').trim().toLowerCase();
+        const senha = String(req.body?.senha || '');
+
+        if (!email || !senha) {
+            return res.status(400).json({ erro: 'E-mail e senha são obrigatórios.' });
+        }
+
+        const usuario = await usuarioModels.buscarPorEmail(email);
+        if (!usuario || usuario.senha !== senha) {
+            return res.status(401).json({ erro: 'E-mail ou senha incorretos.' });
+        }
+
+        return res.json(new UsuarioRespostaDTO(usuario));
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ erro: 'Erro ao realizar login.' });
     }
 }
 
@@ -49,7 +73,10 @@ async function atualizar(req, res) {
         return res.json(new UsuarioRespostaDTO(usuarioAtualizado));
     } catch (e) {
         console.error(e);
-        return res.status(500).json({ erro: 'Erro ao atualizar usuário.', detalhe: e.message });
+        if (e.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ erro: 'Já existe uma conta cadastrada com este e-mail.' });
+        }
+        return res.status(500).json({ erro: 'Erro ao atualizar usuário.' });
     }
 }
 
@@ -66,4 +93,4 @@ async function deletar(req, res) {
     }
 }
 
-module.exports = { listar, buscarPorId, cadastrar, atualizar, deletar };
+module.exports = { listar, buscarPorId, cadastrar, login, atualizar, deletar };
