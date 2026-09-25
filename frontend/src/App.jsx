@@ -10,38 +10,8 @@ const dateLongFmt = new Intl.DateTimeFormat('pt-BR')
 
 const initialCategories = ['Alimentação', 'Moradia', 'Contas', 'Mobilidade', 'Saúde', 'Educação', 'Lazer']
 const initialProfile = { name: 'João Silva', email: 'joao@email.com' }
-const AUTH_USERS_KEY = 'cv-auth-users'
 const AUTH_SESSION_KEY = 'cv-auth-session'
-const USE_API = import.meta.env.VITE_DATA_SOURCE === 'api'
-const API_BASE = import.meta.env.VITE_API_URL || '/api'
-
-async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  })
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(payload?.erro || 'Não foi possível comunicar com o banco de dados.')
-  return payload
-}
-
-function apiDate(value) {
-  return value ? String(value).slice(0, 10) : ''
-}
-
-function mapApiTransaction(item, type) {
-  return {
-    id: `${type}-${type === 'expense' ? item.id_despesa : item.id_renda}`,
-    databaseId: type === 'expense' ? item.id_despesa : item.id_renda,
-    databaseType: type,
-    type,
-    description: item.descricao || '',
-    category: type === 'expense' ? (item.tipo_despesa || 'Despesa') : (item.tipo_renda || 'Renda'),
-    date: apiDate(item.datas),
-    value: Number(item.valor) || 0,
-    periodicity: item.periodicidade || 'Única',
-  }
-}
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
 
 function toCents(value) {
   const number = Number(value)
@@ -100,18 +70,39 @@ async function hashPassword(password) {
   return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-function getAccounts() {
-  return load(AUTH_USERS_KEY, [])
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options,
+  })
+
+  const contentType = response.headers.get('content-type') || ''
+  const payload = contentType.includes('application/json') ? await response.json() : null
+  if (!response.ok) {
+    const error = new Error(payload?.erro || 'Não foi possível concluir a operação.')
+    error.status = response.status
+    throw error
+  }
+
+  return payload
+}
+
+function mapApiUser(user) {
+  if (!user) return null
+  return {
+    id: String(user.id_usuario),
+    id_usuario: user.id_usuario,
+    name: user.nome,
+    email: user.email,
+  }
 }
 
 function userStorageKey(userId, area) {
   return `cv-user-${userId}-${area}`
 }
 
-function getSessionAccount() {
-  const userId = localStorage.getItem(AUTH_SESSION_KEY)
-  if (!userId) return null
-  return getAccounts().find(account => account.id === userId) || null
+function getSessionUserId() {
+  return localStorage.getItem(AUTH_SESSION_KEY)
 }
 
 function migrateLegacyWorkspace(userId) {
@@ -259,12 +250,13 @@ function downloadFile(filename, content, type) {
 }
 
 function App() {
-  const [authUser, setAuthUser] = useState(() => getSessionAccount())
+  const [authUser, setAuthUser] = useState(null)
+  const [authChecking, setAuthChecking] = useState(true)
   const [page, setPage] = useState('dashboard')
-  const [transactions, setTransactions] = useState(() => authUser ? load(userStorageKey(authUser.id, 'transactions'), []) : [])
-  const [goals, setGoals] = useState(() => authUser ? load(userStorageKey(authUser.id, 'goals'), []) : [])
-  const [categories, setCategories] = useState(() => authUser ? load(userStorageKey(authUser.id, 'categories'), initialCategories) : initialCategories)
-  const [profile, setProfile] = useState(() => authUser ? load(userStorageKey(authUser.id, 'profile'), { name: authUser.name, email: authUser.email }) : initialProfile)
+  const [transactions, setTransactions] = useState([])
+  const [goals, setGoals] = useState([])
+  const [categories, setCategories] = useState(initialCategories)
+  const [profile, setProfile] = useState(initialProfile)
   const [modal, setModal] = useState(null)
   const [toast, setToast] = useState(null)
 
@@ -279,10 +271,37 @@ function App() {
     setTransactions(load(userStorageKey(account.id, 'transactions'), []))
     setGoals(load(userStorageKey(account.id, 'goals'), []))
     setCategories(load(userStorageKey(account.id, 'categories'), initialCategories))
-    setProfile(load(userStorageKey(account.id, 'profile'), { name: account.name, email: account.email }))
+    setProfile({ name: account.name, email: account.email })
     setPage('dashboard')
     setModal(null)
   }
+
+  useEffect(() => {
+    let cancelled = false
+
+    const restoreSession = async () => {
+      const userId = getSessionUserId()
+      if (!userId) {
+        if (!cancelled) setAuthChecking(false)
+        return
+      }
+
+      try {
+        const user = await apiRequest(`/usuarios/${encodeURIComponent(userId)}`)
+        if (cancelled) return
+        const account = mapApiUser(user)
+        setAuthUser(account)
+        loadWorkspace(account)
+      } catch {
+        if (!cancelled) localStorage.removeItem(AUTH_SESSION_KEY)
+      } finally {
+        if (!cancelled) setAuthChecking(false)
+      }
+    }
+
+    restoreSession()
+    return () => { cancelled = true }
+  }, [])
 
   const notify = (message, tone = 'success') => {
     setToast({ id: Date.now(), message, tone })
@@ -354,27 +373,20 @@ function App() {
   const register = async ({ name, email, password }) => {
     const cleanName = name.trim()
     const cleanEmail = normalizeEmail(email)
-    const accounts = getAccounts()
     if (!cleanName) return { ok: false, error: 'Informe seu nome.' }
     if (!cleanEmail) return { ok: false, error: 'Informe um e-mail válido.' }
-    if (accounts.some(account => normalizeEmail(account.email) === cleanEmail)) return { ok: false, error: 'Já existe uma conta cadastrada com este e-mail.' }
     if (password.length < 6) return { ok: false, error: 'A senha deve ter pelo menos 6 caracteres.' }
 
     try {
       const passwordHash = await hashPassword(password)
-      const account = {
-        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: cleanName,
-        email: cleanEmail,
-        passwordHash,
-        createdAt: new Date().toISOString(),
-      }
-      const firstAccount = accounts.length === 0
-      localStorage.setItem(AUTH_USERS_KEY, JSON.stringify([...accounts, account]))
+      const user = await apiRequest('/usuarios', {
+        method: 'POST',
+        body: JSON.stringify({ nome: cleanName, email: cleanEmail, senha: passwordHash }),
+      })
+      const account = mapApiUser(user)
       localStorage.setItem(AUTH_SESSION_KEY, account.id)
-      localStorage.setItem(userStorageKey(account.id, 'profile'), JSON.stringify({ name: cleanName, email: cleanEmail }))
       setAuthUser(account)
-      loadWorkspace(account, firstAccount)
+      loadWorkspace(account)
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error.message || 'Não foi possível criar a conta.' }
@@ -383,11 +395,15 @@ function App() {
 
   const login = async ({ email, password }) => {
     const cleanEmail = normalizeEmail(email)
-    const account = getAccounts().find(item => normalizeEmail(item.email) === cleanEmail)
-    if (!account) return { ok: false, error: 'E-mail ou senha incorretos.' }
+    if (!cleanEmail || !password) return { ok: false, error: 'Informe e-mail e senha.' }
+
     try {
       const passwordHash = await hashPassword(password)
-      if (passwordHash !== account.passwordHash) return { ok: false, error: 'E-mail ou senha incorretos.' }
+      const user = await apiRequest('/usuarios/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: cleanEmail, senha: passwordHash }),
+      })
+      const account = mapApiUser(user)
       localStorage.setItem(AUTH_SESSION_KEY, account.id)
       setAuthUser(account)
       loadWorkspace(account)
@@ -571,36 +587,50 @@ function App() {
     notify('Categoria excluída.')
   }
 
-  const saveProfile = nextProfile => {
+  const saveProfile = async nextProfile => {
     if (!authUser) return
     const normalized = { name: nextProfile.name.trim(), email: normalizeEmail(nextProfile.email) }
-    const accounts = getAccounts()
-    const emailInUse = accounts.some(account => account.id !== authUser.id && normalizeEmail(account.email) === normalized.email)
-    if (emailInUse) return notify('Este e-mail já está sendo usado por outra conta.', 'warning')
+    if (!normalized.name) return notify('Informe seu nome.', 'warning')
+    if (!normalized.email) return notify('Informe um e-mail válido.', 'warning')
 
-    const nextAccounts = accounts.map(account => account.id === authUser.id ? { ...account, ...normalized } : account)
-    const updatedAccount = nextAccounts.find(account => account.id === authUser.id)
-    localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(nextAccounts))
-    setAuthUser(updatedAccount)
-    persist('profile', normalized, setProfile)
-    notify('Perfil atualizado com sucesso.')
+    try {
+      const user = await apiRequest(`/usuarios/${encodeURIComponent(authUser.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ nome: normalized.name, email: normalized.email }),
+      })
+      const updatedAccount = mapApiUser(user)
+      setAuthUser(updatedAccount)
+      setProfile(normalized)
+      notify('Perfil atualizado com sucesso.')
+    } catch (error) {
+      notify(error.message || 'Não foi possível atualizar o perfil.', 'warning')
+    }
   }
 
   const changePassword = async (currentPassword, newPassword) => {
     if (!authUser) return { ok: false, error: 'Sessão inválida.' }
     try {
       const currentHash = await hashPassword(currentPassword)
-      if (currentHash !== authUser.passwordHash) return { ok: false, error: 'A senha atual está incorreta.' }
-      const passwordHash = await hashPassword(newPassword)
-      const nextAccounts = getAccounts().map(account => account.id === authUser.id ? { ...account, passwordHash, passwordUpdatedAt: new Date().toISOString() } : account)
-      const updatedAccount = nextAccounts.find(account => account.id === authUser.id)
-      localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(nextAccounts))
+      const newHash = await hashPassword(newPassword)
+
+      await apiRequest('/usuarios/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: authUser.email, senha: currentHash }),
+      })
+
+      const user = await apiRequest(`/usuarios/${encodeURIComponent(authUser.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ senha: newHash }),
+      })
+
+      const updatedAccount = mapApiUser(user)
       setAuthUser(updatedAccount)
       setModal(null)
       notify('Senha atualizada com sucesso.')
       return { ok: true }
     } catch (error) {
-      return { ok: false, error: error.message || 'Não foi possível alterar a senha.' }
+      const errorMessage = error.status === 401 ? 'A senha atual está incorreta.' : (error.message || 'Não foi possível alterar a senha.')
+      return { ok: false, error: errorMessage }
     }
   }
 
@@ -630,6 +660,7 @@ function App() {
     notify('Dados financeiros desta conta foram redefinidos.', 'warning')
   }
 
+  if (authChecking) return <div className="auth-loading">Conectando ao CustosVision...</div>
   if (!authUser) return <AuthScreen onLogin={login} onRegister={register} />
 
   return (
@@ -643,7 +674,7 @@ function App() {
         {page === 'transactions' && <Transactions transactions={transactions} categories={categories} setModal={setModal} />}
         {page === 'goals' && <Goals goals={goals} setModal={setModal} />}
         {page === 'categories' && <Categories categories={categories} transactions={transactions} setModal={setModal} />}
-        {page === 'profile' && <Profile profile={profile} authUser={authUser} onSave={saveProfile} onChangePassword={() => setModal({ type: 'password' })} onExport={exportBackup} onReset={() => setModal({ type: 'reset' })} onLogout={() => setModal({ type: 'logout' })} />}
+        {page === 'profile' && <Profile profile={profile} onSave={saveProfile} onChangePassword={() => setModal({ type: 'password' })} onExport={exportBackup} onReset={() => setModal({ type: 'reset' })} onLogout={() => setModal({ type: 'logout' })} />}
       </main>
 
       <MobileNav page={page} setPage={setPage} overdueCount={overdueGoals.length} />
@@ -1331,7 +1362,7 @@ function Categories({ categories, transactions, setModal }) {
   </div>
 }
 
-function Profile({ profile, authUser, onSave, onChangePassword, onExport, onReset, onLogout }) {
+function Profile({ profile, onSave, onChangePassword, onExport, onReset, onLogout }) {
   const [name, setName] = useState(profile.name)
   const [email, setEmail] = useState(profile.email)
   useEffect(() => { setName(profile.name); setEmail(profile.email) }, [profile])
@@ -1341,15 +1372,14 @@ function Profile({ profile, authUser, onSave, onChangePassword, onExport, onRese
     if (name.trim() && email.trim()) onSave({ name, email })
   }
 
-  const created = authUser?.createdAt ? new Date(authUser.createdAt) : null
 
   return <div className="page profile-page">
     <section className="section-heading"><div><span className="section-kicker">CONTA</span><h2>Meu perfil</h2><p>Gerencie seus dados, segurança e uma cópia local das suas informações.</p></div></section>
     <div className="profile-layout">
-      <aside className="panel profile-card"><span className="avatar avatar-xl">{getInitials(name)}</span><h3>{name}</h3><p>{email}</p><div className="profile-divider" /><div className="profile-meta"><span><small>Conta criada</small><strong>{created && !Number.isNaN(created.getTime()) ? created.toLocaleDateString('pt-BR') : '—'}</strong></span><span><small>Armazenamento</small><strong>Local neste navegador</strong></span></div></aside>
+      <aside className="panel profile-card"><span className="avatar avatar-xl">{getInitials(name)}</span><h3>{name}</h3><p>{email}</p><div className="profile-divider" /><div className="profile-meta"><span><small>Conta</small><strong>Autenticada</strong></span><span><small>Armazenamento</small><strong>Local neste navegador</strong></span></div></aside>
       <div className="profile-stack">
         <form className="panel profile-form" onSubmit={submitProfile}><PanelHeader title="Informações pessoais" subtitle="Esses dados identificam sua conta no CustosVision" /><Field label="Nome completo"><input required value={name} onChange={event => setName(event.target.value)} /></Field><Field label="E-mail"><input required type="email" value={email} onChange={event => setEmail(event.target.value)} /></Field><div className="form-actions"><button className="btn primary" type="submit">Salvar alterações</button></div></form>
-        <section className="panel settings-card"><PanelHeader title="Segurança" subtitle="Proteja o acesso à sua conta local" /><div className="settings-row"><div><strong>Senha da conta</strong><p>Altere sua senha sempre que achar necessário.</p></div><button className="btn secondary" onClick={onChangePassword}>Alterar senha</button></div><div className="settings-row"><div><strong>Sessão atual</strong><p>Encerre o acesso neste navegador.</p></div><button className="btn secondary" onClick={onLogout}>Sair da conta</button></div></section>
+        <section className="panel settings-card"><PanelHeader title="Segurança" subtitle="Proteja o acesso à sua conta" /><div className="settings-row"><div><strong>Senha da conta</strong><p>Altere sua senha sempre que achar necessário.</p></div><button className="btn secondary" onClick={onChangePassword}>Alterar senha</button></div><div className="settings-row"><div><strong>Sessão atual</strong><p>Encerre o acesso neste navegador.</p></div><button className="btn secondary" onClick={onLogout}>Sair da conta</button></div></section>
         <section className="panel settings-card"><PanelHeader title="Dados e backup" subtitle="Recursos úteis para apresentação e segurança do protótipo" /><div className="settings-row"><div><strong>Exportar backup</strong><p>Baixe metas, lançamentos, categorias e perfil em JSON.</p></div><button className="btn secondary" onClick={onExport}>↓ Exportar</button></div><div className="settings-row danger-row"><div><strong>Redefinir dados financeiros</strong><p>Apaga lançamentos e metas desta conta, mantendo login e perfil.</p></div><button className="btn danger-outline" onClick={onReset}>Redefinir</button></div></section>
       </div>
     </div>
@@ -1457,7 +1487,7 @@ function PasswordModal({ onClose, onSubmit }) {
     if (result && !result.ok) setError(result.error)
   }
 
-  return <Modal title="Alterar senha" subtitle="Confirme sua senha atual e defina uma nova." onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Senha atual</span><input autoFocus required type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} placeholder="Digite sua senha atual" /></label><label className="field full-field"><span>Nova senha</span><input required minLength="6" type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo de 6 caracteres" /></label><div className="password-strength full-field"><div>{[0,1,2,3,4].map(index => <i key={index} className={index < strength.score ? 'active' : ''} />)}</div><span>{strength.label}</span></div><label className="field full-field"><span>Confirmar nova senha</span><input required minLength="6" type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="Digite a senha novamente" /></label>{error && <div className="form-error full-field">{error}</div>}<p className="password-note full-field">Nesta versão acadêmica, a autenticação é local. Em produção, login e senha devem ser validados no backend.</p><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar nova senha'}</button></div></form></Modal>
+  return <Modal title="Alterar senha" subtitle="Confirme sua senha atual e defina uma nova." onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Senha atual</span><input autoFocus required type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} placeholder="Digite sua senha atual" /></label><label className="field full-field"><span>Nova senha</span><input required minLength="6" type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo de 6 caracteres" /></label><div className="password-strength full-field"><div>{[0,1,2,3,4].map(index => <i key={index} className={index < strength.score ? 'active' : ''} />)}</div><span>{strength.label}</span></div><label className="field full-field"><span>Confirmar nova senha</span><input required minLength="6" type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="Digite a senha novamente" /></label>{error && <div className="form-error full-field">{error}</div>}<p className="password-note full-field">A autenticação desta apresentação é validada pelo backend e armazenada no MySQL local.</p><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar nova senha'}</button></div></form></Modal>
 }
 
 function CategoryModal({ onClose, onSubmit }) {

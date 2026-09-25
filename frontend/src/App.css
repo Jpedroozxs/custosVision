@@ -316,20 +316,13 @@ tbody tr:last-child td { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .balance-segment { animation: none; } }
 @media(max-width:760px){.realtime-balance-panel{padding:16px}.running-balance-chart{min-width:560px}.running-balance-head{align-items:flex-start}.last-movement{width:100%}}
 @media(max-width:480px){.running-balance-head>div:first-child strong{font-size:21px}.movement-legend{gap:10px}.running-balance-chart{min-width:520px}}
-.field-hint {
-  color: var(--muted);
-  display: block;
-  font-size: .78rem;
-  line-height: 1.35;
-  margin-top: .45rem;
-}
 
-.recurring-label {
-  background: #e1f4ea;
-  border-radius: 999px;
-  color: #117348;
-  font-size: .68rem;
-  font-weight: 700;
-  margin-left: .45rem;
-  padding: .16rem .42rem;
+
+.auth-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--muted, #7b8494);
+  background: #f6f7fb;
+  font-weight: 600;
 }
