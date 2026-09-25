@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import './App.css'
+import custosVisionLogo from './assets/custosvision-logo.png'
+import { parseCurrencyDigits, displayCurrency } from './currency.js'
 
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
 const percentFmt = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 })
@@ -305,11 +307,47 @@ function App() {
     setToast({ id: Date.now(), message, tone })
   }
 
+  const ensureDatabaseUser = async account => {
+    const users = await apiRequest('/usuarios')
+    const existing = users.find(user => normalizeEmail(user.email) === normalizeEmail(account.email))
+    if (existing) return existing
+    return apiRequest('/usuarios', {
+      method: 'POST',
+      body: JSON.stringify({ nome: account.name, email: account.email, senha: account.passwordHash || 'senha-local' }),
+    })
+  }
+
+  const loadDatabaseTransactions = async account => {
+    const databaseUser = await ensureDatabaseUser(account)
+    const [expenses, incomes] = await Promise.all([
+      apiRequest('/despesas'),
+      apiRequest('/rendas'),
+    ])
+    const userId = Number(databaseUser.id_usuario)
+    return [
+      ...expenses.filter(item => Number(item.id_usuario) === userId).map(item => mapApiTransaction(item, 'expense')),
+      ...incomes.filter(item => Number(item.id_usuario) === userId).map(item => mapApiTransaction(item, 'income')),
+    ]
+  }
+
   useEffect(() => {
     if (!toast) return undefined
     const timer = setTimeout(() => setToast(null), toast.tone === 'warning' ? 4200 : 2800)
     return () => clearTimeout(timer)
   }, [toast])
+
+  useEffect(() => {
+    if (!authUser || !USE_API) return undefined
+    let active = true
+    loadDatabaseTransactions(authUser)
+      .then(items => {
+        if (active) setTransactions(items)
+      })
+      .catch(error => {
+        if (active) notify(error.message || 'Não foi possível carregar os dados do banco de dados.', 'warning')
+      })
+    return () => { active = false }
+  }, [authUser])
 
   const totals = useMemo(() => {
     const incomes = transactions.filter(item => item.type === 'income')
@@ -386,36 +424,94 @@ function App() {
     setPage('dashboard')
   }
 
-  const addTransaction = form => {
-    const transaction = {
-      id: Date.now(),
-      type: form.type,
-      description: form.description.trim(),
-      category: form.category,
-      date: form.date,
-      value: fromCents(toCents(form.value)),
+  const addTransaction = async form => {
+    if (!USE_API) {
+      const item = { ...form, id: crypto.randomUUID(), description: form.description.trim(), value: fromCents(toCents(form.value)), periodicity: form.periodicity === 'Mensal' ? 'Mensal' : 'Única' }
+      persist('transactions', [item, ...transactions], setTransactions)
+      setModal(null)
+      notify('Lançamento salvo neste navegador.')
+      return
     }
-    persist('transactions', [transaction, ...transactions], setTransactions)
-    setModal(null)
-    notify(transaction.type === 'income' ? 'Renda adicionada com sucesso.' : 'Despesa adicionada com sucesso.')
+    try {
+      const databaseUser = await ensureDatabaseUser(authUser)
+      const isExpense = form.type === 'expense'
+      const saved = await apiRequest(isExpense ? '/despesas' : '/rendas', {
+        method: 'POST',
+        body: JSON.stringify(isExpense ? {
+          descricao: form.description.trim(),
+          tipo_despesa: form.category,
+          periodicidade: form.periodicity === 'Mensal' ? 'Mensal' : 'Única',
+          datas: form.date,
+          valor: fromCents(toCents(form.value)),
+          id_usuario: databaseUser.id_usuario,
+          id_categoria: null,
+        } : {
+          descricao: form.description.trim(),
+          tipo_renda: form.category,
+          periodicidade: form.periodicity === 'Mensal' ? 'Mensal' : 'Única',
+          datas: form.date,
+          valor: fromCents(toCents(form.value)),
+          id_usuario: databaseUser.id_usuario,
+        }),
+      })
+      const transaction = mapApiTransaction(saved, form.type)
+      setTransactions(current => [transaction, ...current])
+      setModal(null)
+      notify(isExpense ? 'Despesa salva no banco de dados.' : 'Renda salva no banco de dados.')
+    } catch (error) {
+      notify(error.message || 'Não foi possível salvar o lançamento.', 'error')
+    }
   }
 
-  const updateTransaction = (id, form) => {
-    const next = transactions.map(item => item.id === id ? {
-      ...item,
-      ...form,
-      description: form.description.trim(),
-      value: fromCents(toCents(form.value)),
-    } : item)
-    persist('transactions', next, setTransactions)
-    setModal(null)
-    notify('Lançamento atualizado.')
+  const updateTransaction = async (id, form) => {
+    if (!USE_API) {
+      persist('transactions', transactions.map(item => item.id === id ? { ...item, ...form, id, description: form.description.trim(), value: fromCents(toCents(form.value)), periodicity: form.periodicity === 'Mensal' ? 'Mensal' : 'Única' } : item), setTransactions)
+      setModal(null)
+      notify('Lançamento atualizado neste navegador.')
+      return
+    }
+    const current = transactions.find(item => item.id === id)
+    if (!current?.databaseId) return notify('Este lançamento não está vinculado ao banco de dados.', 'warning')
+    try {
+      if (form.type !== current.databaseType) return notify('No modo API, mantenha o tipo original do lançamento.', 'warning')
+      const isExpense = current.databaseType === 'expense'
+      const saved = await apiRequest(`${isExpense ? '/despesas' : '/rendas'}/${current.databaseId}`, {
+        method: 'PUT',
+        body: JSON.stringify(isExpense ? {
+          descricao: form.description.trim(), tipo_despesa: form.category,
+          periodicidade: form.periodicity === 'Mensal' ? 'Mensal' : 'Única', datas: form.date,
+          valor: fromCents(toCents(form.value)),
+        } : {
+          descricao: form.description.trim(), tipo_renda: form.category,
+          periodicidade: form.periodicity === 'Mensal' ? 'Mensal' : 'Única', datas: form.date, valor: fromCents(toCents(form.value)),
+        }),
+      })
+      const updated = mapApiTransaction(saved, current.databaseType)
+      setTransactions(items => items.map(item => item.id === id ? updated : item))
+      setModal(null)
+      notify('Lançamento atualizado no banco de dados.')
+    } catch (error) {
+      notify(error.message || 'Não foi possível atualizar o lançamento.', 'error')
+    }
   }
 
-  const removeTransaction = id => {
-    persist('transactions', transactions.filter(item => item.id !== id), setTransactions)
-    setModal(null)
-    notify('Lançamento excluído.')
+  const removeTransaction = async id => {
+    if (!USE_API) {
+      persist('transactions', transactions.filter(item => item.id !== id), setTransactions)
+      setModal(null)
+      notify('Lançamento excluído deste navegador.')
+      return
+    }
+    const current = transactions.find(item => item.id === id)
+    if (!current?.databaseId) return notify('Este lançamento não está vinculado ao banco de dados.', 'warning')
+    try {
+      await apiRequest(`${current.databaseType === 'expense' ? '/despesas' : '/rendas'}/${current.databaseId}`, { method: 'DELETE' })
+      setTransactions(items => items.filter(item => item.id !== id))
+      setModal(null)
+      notify('Lançamento excluído do banco de dados.')
+    } catch (error) {
+      notify(error.message || 'Não foi possível excluir o lançamento.', 'error')
+    }
   }
 
   const addGoal = form => {
@@ -554,6 +650,7 @@ function App() {
   }
 
   const resetWorkspace = () => {
+    if (USE_API) return notify('A redefinição está disponível somente no modo local. Exclua os lançamentos individualmente no modo API.', 'warning')
     persist('transactions', [], setTransactions)
     localStorage.setItem(userStorageKey(authUser.id, 'goals'), JSON.stringify([]))
     localStorage.setItem(userStorageKey(authUser.id, 'categories'), JSON.stringify(initialCategories))
@@ -570,6 +667,7 @@ function App() {
     <div className="app-shell">
       <Sidebar page={page} setPage={setPage} profile={profile} overdueCount={overdueGoals.length} onLogout={() => setModal({ type: 'logout' })} />
       <main className="main-content">
+        <p role="status" style={{ margin: 0, padding: '10px 24px', background: '#eaf8f1', fontSize: 12 }}>{USE_API ? 'Modo API: rendas e despesas usam o banco; login e metas continuam locais.' : 'Modo local: dados salvos neste navegador. Sem conexão com o banco de dados.'}</p>
         <Topbar page={page} setPage={setPage} profile={profile} overdueCount={overdueGoals.length} />
 
         {page === 'dashboard' && <Dashboard totals={totals} transactions={transactions} goals={goals} categories={categories} profile={profile} setPage={setPage} setModal={setModal} />}
@@ -687,7 +785,11 @@ function AuthScreen({ onLogin, onRegister }) {
 }
 
 function Logo() {
-  return <div className="brand"><span className="brand-mark">C</span><span>Custos<span>Vision</span></span></div>
+  return <div className="brand">
+    <svg className="brand-logo" viewBox="155 218 1740 244" role="img" aria-label="custosVision" focusable="false">
+      <image href={custosVisionLogo} width="2048" height="682" />
+    </svg>
+  </div>
 }
 
 const navItems = [
@@ -916,7 +1018,7 @@ function CashFlowChart({ data }) {
 }
 
 function DonutChart({ data, totalLabel, totalFormatter, valueFormatter, compact = false }) {
-  const palette = ['var(--purple)', '#6bc79f', '#4c83cb', '#ef8e62', '#e0649a', '#9c88ff']
+  const palette = ['var(--purple)', '#6bc79f', '#4c83cb', '#ef8e62', '#e0649a', '#58b987']
   const total = data.reduce((sum, item) => sum + Number(item.value || 0), 0)
   const radius = compact ? 48 : 56
   const circumference = 2 * Math.PI * radius
@@ -1071,7 +1173,7 @@ function Transactions({ transactions, categories, setModal }) {
 
 function TransactionTable({ items, compact = false, onEdit, onDelete }) {
   if (!items.length) return <EmptyState title="Nenhum lançamento encontrado" text="Adicione uma renda ou despesa, ou ajuste os filtros para encontrar outros resultados." />
-  return <div className="table-wrap"><table><thead><tr><th>Descrição</th><th>Categoria</th><th>Data</th><th>Tipo</th><th className="right">Valor</th>{!compact && <th className="right">Ações</th>}</tr></thead><tbody>{items.map(item => <tr key={item.id}><td><div className="description-cell"><span className={`type-dot ${item.type}`}>{item.type === 'income' ? '↗' : '↘'}</span><strong>{item.description}</strong></div></td><td>{item.category}</td><td>{parseDate(item.date) ? dateShortFmt.format(parseDate(item.date)) : '—'}</td><td><span className={`badge ${item.type}`}>{item.type === 'income' ? 'Renda' : 'Despesa'}</span></td><td className={`right value ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.value)}</td>{!compact && <td className="right"><div className="table-actions"><button className="icon-button" title="Editar" onClick={() => onEdit(item)}>✎</button><button className="icon-button danger" title="Excluir" onClick={() => onDelete(item)}>×</button></div></td>}</tr>)}</tbody></table></div>
+  return <div className="table-wrap"><table><thead><tr><th>Descrição</th><th>Categoria</th><th>Data</th><th>Tipo</th><th className="right">Valor</th>{!compact && <th className="right">Ações</th>}</tr></thead><tbody>{items.map(item => <tr key={item.id}><td><div className="description-cell"><span className={`type-dot ${item.type}`}>{item.type === 'income' ? '↗' : '↘'}</span><strong>{item.description}</strong>{item.periodicity === 'Mensal' && <small className="recurring-label">Mensal</small>}</div></td><td>{item.category}</td><td>{parseDate(item.date) ? dateShortFmt.format(parseDate(item.date)) : '—'}</td><td><span className={`badge ${item.type}`}>{item.type === 'income' ? 'Renda' : 'Despesa'}</span></td><td className={`right value ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.value)}</td>{!compact && <td className="right"><div className="table-actions"><button className="icon-button" title="Editar" onClick={() => onEdit(item)}>✎</button><button className="icon-button danger" title="Excluir" onClick={() => onDelete(item)}>×</button></div></td>}</tr>)}</tbody></table></div>
 }
 
 function Goals({ goals, setModal }) {
@@ -1306,8 +1408,28 @@ function Modal({ title, subtitle, onClose, children, narrow = false }) {
   return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><div className={`modal ${narrow ? 'modal-narrow' : ''}`} role="dialog" aria-modal="true" aria-label={title}><div className="modal-head"><div><h3>{title}</h3><p>{subtitle}</p></div><button onClick={onClose} aria-label="Fechar">×</button></div>{children}</div></div>
 }
 
+function MoneyInput({ value, onChange, name, min = 0, max, required = false, ...props }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const amount = Number(value)
+    let error = ''
+    if (value !== '' && value != null) {
+      if (!Number.isFinite(amount) || amount < Number(min)) error = `Informe pelo menos ${money.format(Number(min))}.`
+      else if (max != null && amount > Number(max)) error = `O valor máximo é ${money.format(Number(max))}.`
+    }
+    ref.current?.setCustomValidity(error)
+  }, [value, min, max])
+
+  return <input {...props} ref={ref} name={name} type="text" inputMode="numeric"
+    required={required} placeholder="R$ 0,00" value={displayCurrency(value)}
+    onChange={event => {
+      const next = parseCurrencyDigits(event.target.value)
+      onChange({ target: { name, value: next } })
+    }} />
+}
+
 function TransactionModal({ categories, initialType, transaction, onClose, onSubmit }) {
-  const [form, setForm] = useState(() => transaction ? { ...transaction, value: Number(transaction.value).toFixed(2) } : { type: initialType || 'expense', description: '', category: categories[0] || 'Outros', date: todayInputValue(), value: '' })
+  const [form, setForm] = useState(() => transaction ? { ...transaction, periodicity: transaction.periodicity || 'Única', value: Number(transaction.value).toFixed(2) } : { type: initialType || 'expense', description: '', category: categories[0] || 'Outros', date: todayInputValue(), value: '', periodicity: 'Única' })
   const update = event => setForm(current => ({ ...current, [event.target.name]: event.target.value }))
   const submit = event => {
     event.preventDefault()
@@ -1315,7 +1437,7 @@ function TransactionModal({ categories, initialType, transaction, onClose, onSub
     if (transaction) onSubmit(transaction.id, form)
     else onSubmit(form)
   }
-  return <Modal title={transaction ? 'Editar lançamento' : 'Novo lançamento'} subtitle={transaction ? 'Atualize os dados desta movimentação.' : 'Registre uma movimentação financeira.'} onClose={onClose}><form onSubmit={submit} className="form-grid"><Field label="Tipo"><div className="segmented"><button type="button" className={form.type === 'expense' ? 'selected' : ''} onClick={() => setForm({ ...form, type: 'expense' })}>Despesa</button><button type="button" className={form.type === 'income' ? 'selected' : ''} onClick={() => setForm({ ...form, type: 'income' })}>Renda</button></div></Field><Field label="Descrição"><input autoFocus required name="description" value={form.description} onChange={update} placeholder="Ex.: Supermercado" /></Field><Field label="Valor"><input required min="0.01" step="0.01" name="value" type="number" value={form.value} onChange={update} placeholder="0,00" /></Field><Field label="Data"><input required name="date" type="date" value={form.date} onChange={update} /></Field><label className="field full-field"><span>Categoria</span><select name="category" value={form.category} onChange={update}>{form.type === 'income' && <><option>Renda principal</option><option>Renda extra</option></>}{categories.map(category => <option key={category}>{category}</option>)}</select></label><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{transaction ? 'Salvar alterações' : 'Salvar lançamento'}</button></div></form></Modal>
+  return <Modal title={transaction ? 'Editar lançamento' : 'Novo lançamento'} subtitle={transaction ? 'Atualize os dados desta movimentação.' : 'Registre uma movimentação financeira.'} onClose={onClose}><form onSubmit={submit} className="form-grid"><Field label="Tipo"><div className="segmented"><button type="button" className={form.type === 'expense' ? 'selected' : ''} onClick={() => setForm({ ...form, type: 'expense' })}>Despesa</button><button type="button" className={form.type === 'income' ? 'selected' : ''} onClick={() => setForm({ ...form, type: 'income' })}>Renda</button></div></Field><Field label="Descrição"><input autoFocus required name="description" value={form.description} onChange={update} placeholder="Ex.: Supermercado" /></Field><Field label="Valor"><MoneyInput required min="0.01" name="value" value={form.value} onChange={update} /></Field><Field label="Data"><input required name="date" type="date" value={form.date} onChange={update} /></Field><label className="field full-field"><span>Categoria</span><select name="category" value={form.category} onChange={update}>{form.type === 'income' && <><option>Renda principal</option><option>Renda extra</option></>}{categories.map(category => <option key={category}>{category}</option>)}</select></label>{<label className="field full-field"><span>Frequência</span><select name="periodicity" value={form.periodicity} onChange={update}><option value="Única">Somente esta vez</option><option value="Mensal">Mensal</option></select><small className="field-hint">Mensal indica que esta renda ou despesa se repete todo mês. Você ainda precisa cadastrar cada mês; o sistema não cria os próximos lançamentos sozinho.</small></label>}<div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{transaction ? 'Salvar alterações' : 'Salvar lançamento'}</button></div></form></Modal>
 }
 
 function GoalModal({ goal, onClose, onSubmit }) {
@@ -1327,7 +1449,7 @@ function GoalModal({ goal, onClose, onSubmit }) {
     if (goal) onSubmit(goal.id, form)
     else onSubmit(form)
   }
-  return <Modal title={goal ? 'Editar meta' : 'Nova meta'} subtitle={goal ? 'Ajuste nome, valores ou prazo do objetivo.' : 'Defina um objetivo para manter o foco.'} onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Nome da meta</span><input autoFocus required name="name" value={form.name} onChange={update} placeholder="Ex.: Reserva de emergência" /></label><Field label="Valor objetivo"><input required min="0.01" step="0.01" type="number" name="target" value={form.target} onChange={update} placeholder="0,00" /></Field><Field label="Valor acumulado"><input min="0" step="0.01" type="number" name="saved" value={form.saved} onChange={update} placeholder="0,00" /></Field><label className="field full-field"><span>Prazo</span><input required type="date" name="deadline" value={form.deadline} onChange={update} /></label><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{goal ? 'Salvar alterações' : 'Criar meta'}</button></div></form></Modal>
+  return <Modal title={goal ? 'Editar meta' : 'Nova meta'} subtitle={goal ? 'Ajuste nome, valores ou prazo do objetivo.' : 'Defina um objetivo para manter o foco.'} onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Nome da meta</span><input autoFocus required name="name" value={form.name} onChange={update} placeholder="Ex.: Reserva de emergência" /></label><Field label="Valor objetivo"><MoneyInput required min="0.01" name="target" value={form.target} onChange={update} /></Field><Field label="Valor acumulado"><MoneyInput min="0" name="saved" value={form.saved} onChange={update} /></Field><label className="field full-field"><span>Prazo</span><input required type="date" name="deadline" value={form.deadline} onChange={update} /></label><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{goal ? 'Salvar alterações' : 'Criar meta'}</button></div></form></Modal>
 }
 
 function ContributionModal({ goal, onClose, onSubmit }) {
@@ -1342,7 +1464,7 @@ function ContributionModal({ goal, onClose, onSubmit }) {
     const contributionCents = toCents(value)
     if (contributionCents > 0 && contributionCents <= remainingCents) onSubmit(goal.id, fromCents(contributionCents))
   }
-  return <Modal title="Fazer aporte" subtitle={goal.name} onClose={onClose}><form onSubmit={submit} className="form-grid"><div className="contribution-summary full-field"><span>Falta para a meta</span><strong>{money.format(remaining)}</strong></div><label className="field full-field"><span>Valor do aporte</span><input autoFocus required min="0.01" max={maxContribution} step="0.01" type="number" value={value} onChange={event => setValue(event.target.value)} placeholder="0,00" /></label><div className="quick-values full-field">{[25, 50, 100].map(percent => { const amount = fromCents(Math.floor((remainingCents * percent) / 100)); return <button type="button" key={percent} disabled={amount < 0.01} onClick={() => setValue(Math.min(remaining, amount).toFixed(2))}>{percent}% <span>{money.format(amount)}</span></button> })}<button type="button" onClick={() => setValue(maxContribution)}>Completar <span>{money.format(remaining)}</span></button></div><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">Registrar aporte</button></div></form></Modal>
+  return <Modal title="Fazer aporte" subtitle={goal.name} onClose={onClose}><form onSubmit={submit} className="form-grid"><div className="contribution-summary full-field"><span>Falta para a meta</span><strong>{money.format(remaining)}</strong></div><label className="field full-field"><span>Valor do aporte</span><MoneyInput autoFocus required min="0.01" max={maxContribution} value={value} onChange={event => setValue(event.target.value)} /></label><div className="quick-values full-field">{[25, 50, 100].map(percent => { const amount = fromCents(Math.floor((remainingCents * percent) / 100)); return <button type="button" key={percent} disabled={amount < 0.01} onClick={() => setValue(Math.min(remaining, amount).toFixed(2))}>{percent}% <span>{money.format(amount)}</span></button> })}<button type="button" onClick={() => setValue(maxContribution)}>Completar <span>{money.format(remaining)}</span></button></div><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">Registrar aporte</button></div></form></Modal>
 }
 
 function PasswordModal({ onClose, onSubmit }) {
