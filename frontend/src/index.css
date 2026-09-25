@@ -5,9 +5,9 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --purple: #6d5ce7;
-  --purple-dark: #5848ce;
-  --purple-soft: #f0eefe;
+  --purple: #168b60;
+  --purple-dark: #0f6f4a;
+  --purple-soft: #eaf8f1;
   --border: #e7e9ef;
   --muted: #7b8494;
   --text: #18212f;
@@ -18,4 +18,4 @@ html { background: #f6f7fb; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
-::selection { background: #ddd8ff; color: #342b73; }
+::selection { background: #cdebdc; color: #145c3d; }
