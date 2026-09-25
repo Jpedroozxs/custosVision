@@ -4,9 +4,10 @@ const router=express.Router();
 
 router.get('/',controller.listar);
 
-router.get('/:id',controller.buscarPorId);
-
 router.post('/',controller.cadastrar);
+router.post('/login',controller.login);
+
+router.get('/:id',controller.buscarPorId);
 
 router.put('/:id',controller.atualizar);
 
