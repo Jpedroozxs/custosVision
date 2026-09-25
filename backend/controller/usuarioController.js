@@ -137,4 +137,4 @@ async function deletar(req, res) {
     }
 }
 
-module.exports = { listar, buscarPorId, cadastrar, login, atualizar, deletar };
+module.exports = { criarUsuario, listar, buscarPorId, cadastrar, login, atualizar, deletar };
