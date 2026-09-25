@@ -54,6 +54,18 @@ function normalizeEmail(email = '') {
   return email.trim().toLowerCase()
 }
 
+function normalizeCpf(cpf = '') {
+  return cpf.replace(/\D/g, '').slice(0, 11)
+}
+
+function formatCpf(cpf = '') {
+  const digits = normalizeCpf(cpf)
+  return digits
+    .replace(/^(\d{3})(\d)/, '$1.$2')
+    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1-$2')
+}
+
 function load(key, fallback) {
   try {
     const saved = localStorage.getItem(key)
@@ -370,20 +382,29 @@ function App() {
     }
   }, [authUser, overdueGoals])
 
-  const register = async ({ name, email, password }) => {
+  const register = async ({ name, cpf, email, password }) => {
     const cleanName = name.trim()
+    const cleanCpf = normalizeCpf(cpf)
     const cleanEmail = normalizeEmail(email)
     if (!cleanName) return { ok: false, error: 'Informe seu nome.' }
+    if (cleanCpf.length !== 11) return { ok: false, error: 'Informe um CPF válido com 11 dígitos.' }
     if (!cleanEmail) return { ok: false, error: 'Informe um e-mail válido.' }
+    if (accounts.some(account => normalizeCpf(account.cpf) === cleanCpf)) return { ok: false, error: 'Já existe uma conta cadastrada com este CPF.' }
+    if (accounts.some(account => normalizeEmail(account.email) === cleanEmail)) return { ok: false, error: 'Já existe uma conta cadastrada com este e-mail.' }
     if (password.length < 6) return { ok: false, error: 'A senha deve ter pelo menos 6 caracteres.' }
 
     try {
       const passwordHash = await hashPassword(password)
-      const user = await apiRequest('/usuarios', {
-        method: 'POST',
-        body: JSON.stringify({ nome: cleanName, email: cleanEmail, senha: passwordHash }),
-      })
-      const account = mapApiUser(user)
+      const account = {
+        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: cleanName,
+        cpf: cleanCpf,
+        email: cleanEmail,
+        passwordHash,
+        createdAt: new Date().toISOString(),
+      }
+      const firstAccount = accounts.length === 0
+      localStorage.setItem(AUTH_USERS_KEY, JSON.stringify([...accounts, account]))
       localStorage.setItem(AUTH_SESSION_KEY, account.id)
       setAuthUser(account)
       loadWorkspace(account)
@@ -698,6 +719,7 @@ function App() {
 function AuthScreen({ onLogin, onRegister }) {
   const [mode, setMode] = useState('login')
   const [name, setName] = useState('')
+  const [cpf, setCpf] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -719,7 +741,7 @@ function AuthScreen({ onLogin, onRegister }) {
     setError('')
     if (mode === 'register' && password !== confirmPassword) return setError('As senhas não coincidem.')
     setLoading(true)
-    const result = mode === 'login' ? await onLogin({ email, password }) : await onRegister({ name, email, password })
+    const result = mode === 'login' ? await onLogin({ email, password }) : await onRegister({ name, cpf, email, password })
     setLoading(false)
     if (!result?.ok) setError(result?.error || 'Não foi possível continuar.')
   }
@@ -763,7 +785,8 @@ function AuthScreen({ onLogin, onRegister }) {
 
             <form className="auth-form" onSubmit={submit}>
               {mode === 'register' && <Field label="Nome completo"><input autoFocus autoComplete="name" required value={name} onChange={event => setName(event.target.value)} placeholder="Seu nome" /></Field>}
-              <Field label="E-mail"><input autoFocus={mode === 'login'} autoComplete="email" required type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="voce@email.com" /></Field>
+              {mode === 'register' && <Field label="CPF"><input autoComplete="off" inputMode="numeric" required maxLength="14" value={cpf} onChange={event => setCpf(formatCpf(event.target.value))} placeholder="000.000.000-00" /></Field>}
+              <Field label="E-mail"><input autoComplete="email" required type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="voce@email.com" /></Field>
               <Field label="Senha">
                 <div className="password-field"><input autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required minLength="6" type={showPassword ? 'text' : 'password'} value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo de 6 caracteres" /><button type="button" onClick={() => setShowPassword(value => !value)}>{showPassword ? 'Ocultar' : 'Mostrar'}</button></div>
               </Field>
