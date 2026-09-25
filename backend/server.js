@@ -25,6 +25,10 @@ app.use('/api/aportes-meta', require('./routes/aporteMetaRoutes'));
 
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
 
+app.use('/api/cpf', require('./routes/cpfRoutes'));
+
+app.use('/api/email', require('./routes/emailRoutes'));
+
 async function iniciar() {
   try { await testarConexao(); }
   catch (error) { console.error('Não foi possível conectar ao MySQL:', error.message); }
