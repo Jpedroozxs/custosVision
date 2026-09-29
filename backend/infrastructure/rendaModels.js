@@ -11,11 +11,18 @@ async function buscarPorId(id) {
 }
 
 async function cadastrar(dados) {
-  const [result] = await pool.query(
-    'INSERT INTO renda (descricao, valor, tipo_renda, periodicidade, datas, id_usuario) VALUES (?, ?, ?, ?, ?, ?)',
-    [dados.descricao, dados.valor, dados.tipo_renda, dados.periodicidade, dados.datas, dados.id_usuario]
-  );
-  return buscarPorId(result.insertId);
+  const valor = Number(dados.valor);
+
+  if (valor > 99999999.99) {
+    throw new Error('O valor da despesa não pode ser maior que 99.999.999,99');
+  }
+  else {
+    const [result] = await pool.query(
+      'INSERT INTO renda (descricao, valor, tipo_renda, periodicidade, datas, id_usuario) VALUES (?, ?, ?, ?, ?, ?)',
+      [dados.descricao, dados.valor, dados.tipo_renda, dados.periodicidade, dados.datas, dados.id_usuario]
+    );
+    return buscarPorId(result.insertId);
+  }
 }
 
 async function atualizar(id, dados) {
