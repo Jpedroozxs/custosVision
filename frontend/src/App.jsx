@@ -405,10 +405,7 @@ function App() {
       })
       const account = mapApiUser(user)
       if (!account?.id) throw new Error('A API não retornou o usuário cadastrado.')
-      localStorage.setItem(AUTH_SESSION_KEY, account.id)
-      setAuthUser(account)
-      loadWorkspace(account)
-      return { ok: true }
+      return { ok: true, account }
     } catch (error) {
       return { ok: false, error: error.message || 'Não foi possível criar a conta.' }
     }
@@ -663,8 +660,15 @@ function App() {
     notify('Dados financeiros desta conta foram redefinidos.', 'warning')
   }
 
+  const completeRegistration = account => {
+    if (!account?.id) return
+    localStorage.setItem(AUTH_SESSION_KEY, account.id)
+    setAuthUser(account)
+    loadWorkspace(account)
+  }
+
   if (authChecking) return <div className="auth-loading">Conectando ao CustosVision...</div>
-  if (!authUser) return <AuthScreen onLogin={login} onRegister={register} />
+  if (!authUser) return <AuthScreen onLogin={login} onRegister={register} onRegistrationComplete={completeRegistration} />
 
   return (
     <div className="app-shell">
@@ -698,7 +702,7 @@ function App() {
   )
 }
 
-function AuthScreen({ onLogin, onRegister }) {
+function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
   const [mode, setMode] = useState('login')
   const [name, setName] = useState('')
   const [cpf, setCpf] = useState('')
@@ -708,6 +712,7 @@ function AuthScreen({ onLogin, onRegister }) {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [registeredAccount, setRegisteredAccount] = useState(null)
   const strength = passwordStrength(password)
 
   const changeMode = nextMode => {
@@ -716,6 +721,7 @@ function AuthScreen({ onLogin, onRegister }) {
     setPassword('')
     setConfirmPassword('')
     setShowPassword(false)
+    setRegisteredAccount(null)
   }
 
   const submit = async event => {
@@ -725,7 +731,56 @@ function AuthScreen({ onLogin, onRegister }) {
     setLoading(true)
     const result = mode === 'login' ? await onLogin({ email, password }) : await onRegister({ name, cpf, email, password })
     setLoading(false)
-    if (!result?.ok) setError(result?.error || 'Não foi possível continuar.')
+    if (!result?.ok) {
+      setError(result?.error || 'Não foi possível continuar.')
+      return
+    }
+    if (mode === 'register' && result.account) setRegisteredAccount(result.account)
+  }
+
+  if (registeredAccount) {
+    return (
+      <main className="auth-page">
+        <section className="auth-shell">
+          <div className="auth-intro">
+            <Logo />
+            <div className="auth-copy">
+              <span className="auth-kicker">SEU DINHEIRO, COM MAIS CLAREZA</span>
+              <h1>Controle financeiro que você entende de verdade.</h1>
+              <p>Registre movimentações, acompanhe metas e transforme números em decisões simples para o seu dia a dia.</p>
+            </div>
+            <div className="auth-preview" aria-hidden="true">
+              <div className="preview-top"><span>Saldo disponível</span><b>+12,4%</b></div>
+              <strong>R$ 4.286,40</strong>
+              <div className="preview-bars"><i /><i /><i /><i /><i /><i /><i /></div>
+              <div className="preview-legend"><span><b className="dot green" />Receitas</span><span><b className="dot purple" />Economia</span></div>
+            </div>
+            <div className="auth-benefits">
+              <div><span>↗</span><p><strong>Visão completa</strong>Receitas e despesas organizadas em poucos cliques.</p></div>
+              <div><span>◎</span><p><strong>Metas claras</strong>Progresso, prazo e quanto ainda falta em um só lugar.</p></div>
+              <div><span>⌁</span><p><strong>Dados por conta</strong>Cada usuário mantém sua própria visão financeira.</p></div>
+            </div>
+            <small>CustosVision • Projeto Integrador</small>
+          </div>
+
+          <div className="auth-card-wrap">
+            <div className="auth-card auth-success-card">
+              <div className="auth-mobile-brand"><Logo /></div>
+              <div className="success-icon" aria-hidden="true">✓</div>
+              <span className="auth-mini-kicker">TUDO CERTO</span>
+              <h2>Cadastro criado com sucesso!</h2>
+              <p className="success-message">Sua conta foi criada e já está pronta para você começar a organizar sua vida financeira.</p>
+              <div className="success-account">
+                <span>Conta cadastrada</span>
+                <strong>{registeredAccount.email}</strong>
+              </div>
+              <button className="btn primary auth-submit" type="button" onClick={() => onRegistrationComplete(registeredAccount)}>Acessar minha conta</button>
+              <button className="success-back" type="button" onClick={() => changeMode('login')}>Voltar para o login</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    )
   }
 
   return (
