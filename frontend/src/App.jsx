@@ -11,7 +11,7 @@ const dateLongFmt = new Intl.DateTimeFormat('pt-BR')
 const initialCategories = ['Alimentação', 'Moradia', 'Contas', 'Mobilidade', 'Saúde', 'Educação', 'Lazer']
 const initialProfile = { name: 'João Silva', email: 'joao@email.com' }
 const AUTH_SESSION_KEY = 'cv-auth-session'
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000/api').replace(/\/$/, '')
 
 function toCents(value) {
   const number = Number(value)
@@ -36,7 +36,7 @@ function todayInputValue() {
 
 function parseDate(value) {
   if (!value) return null
-  const date = new Date(`${value}T12:00:00`)
+  const date = new Date(`${String(value).slice(0, 10)}T12:00:00`)
   return Number.isNaN(date.getTime()) ? null : date
 }
 
@@ -91,7 +91,7 @@ async function apiRequest(path, options = {}) {
   const contentType = response.headers.get('content-type') || ''
   const payload = contentType.includes('application/json') ? await response.json() : null
   if (!response.ok) {
-    const error = new Error(payload?.erro || 'Não foi possível concluir a operação.')
+    const error = new Error(payload?.erro || payload?.error || payload?.message || 'Não foi possível concluir a operação.')
     error.status = response.status
     throw error
   }
@@ -106,6 +106,23 @@ function mapApiUser(user) {
     id_usuario: user.id_usuario,
     name: user.nome,
     email: user.email,
+  }
+}
+
+function mapApiTransaction(item, type) {
+  if (!item) throw new Error('A API não retornou o lançamento salvo.')
+  const databaseId = item[type === 'expense' ? 'id_despesa' : 'id_renda']
+  if (databaseId == null) throw new Error('O lançamento retornou sem identificador.')
+  return {
+    id: `${type}-${databaseId}`,
+    databaseId,
+    databaseType: type,
+    type,
+    description: item.descricao || '',
+    category: item[type === 'expense' ? 'tipo_despesa' : 'tipo_renda'] || 'Outros',
+    periodicity: item.periodicidade || 'Única',
+    date: String(item.datas || item.data || '').slice(0, 10),
+    value: Number(item.valor) || 0,
   }
 }
 
@@ -319,26 +336,15 @@ function App() {
     setToast({ id: Date.now(), message, tone })
   }
 
-  const ensureDatabaseUser = async account => {
-    const users = await apiRequest('/usuarios')
-    const existing = users.find(user => normalizeEmail(user.email) === normalizeEmail(account.email))
-    if (existing) return existing
-    return apiRequest('/usuarios', {
-      method: 'POST',
-      body: JSON.stringify({ nome: account.name, email: account.email, senha: account.passwordHash || 'senha-local' }),
-    })
-  }
-
   const loadDatabaseTransactions = async account => {
-    const databaseUser = await ensureDatabaseUser(account)
     const [expenses, incomes] = await Promise.all([
       apiRequest('/despesas'),
       apiRequest('/rendas'),
     ])
-    const userId = Number(databaseUser.id_usuario)
+    const userId = Number(account.id_usuario)
     return [
-      ...expenses.filter(item => Number(item.id_usuario) === userId).map(item => mapApiTransaction(item, 'expense')),
-      ...incomes.filter(item => Number(item.id_usuario) === userId).map(item => mapApiTransaction(item, 'income')),
+      ...(Array.isArray(expenses) ? expenses : []).filter(item => Number(item.id_usuario) === userId).map(item => mapApiTransaction(item, 'expense')),
+      ...(Array.isArray(incomes) ? incomes : []).filter(item => Number(item.id_usuario) === userId).map(item => mapApiTransaction(item, 'income')),
     ]
   }
 
@@ -349,7 +355,7 @@ function App() {
   }, [toast])
 
   useEffect(() => {
-    if (!authUser || !USE_API) return undefined
+    if (!authUser) return undefined
     let active = true
     loadDatabaseTransactions(authUser)
       .then(items => {
@@ -389,26 +395,17 @@ function App() {
     if (!cleanName) return { ok: false, error: 'Informe seu nome.' }
     if (cleanCpf.length !== 11) return { ok: false, error: 'Informe um CPF válido com 11 dígitos.' }
     if (!cleanEmail) return { ok: false, error: 'Informe um e-mail válido.' }
-    if (accounts.some(account => normalizeCpf(account.cpf) === cleanCpf)) return { ok: false, error: 'Já existe uma conta cadastrada com este CPF.' }
-    if (accounts.some(account => normalizeEmail(account.email) === cleanEmail)) return { ok: false, error: 'Já existe uma conta cadastrada com este e-mail.' }
     if (password.length < 6) return { ok: false, error: 'A senha deve ter pelo menos 6 caracteres.' }
 
     try {
       const passwordHash = await hashPassword(password)
-      const account = {
-        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: cleanName,
-        cpf: cleanCpf,
-        email: cleanEmail,
-        passwordHash,
-        createdAt: new Date().toISOString(),
-      }
-      const firstAccount = accounts.length === 0
-      localStorage.setItem(AUTH_USERS_KEY, JSON.stringify([...accounts, account]))
-      localStorage.setItem(AUTH_SESSION_KEY, account.id)
-      setAuthUser(account)
-      loadWorkspace(account)
-      return { ok: true }
+      const user = await apiRequest('/usuarios', {
+        method: 'POST',
+        body: JSON.stringify({ nome: cleanName, cpf: cleanCpf, email: cleanEmail, senha: passwordHash }),
+      })
+      const account = mapApiUser(user)
+      if (!account?.id) throw new Error('A API não retornou o usuário cadastrado.')
+      return { ok: true, account }
     } catch (error) {
       return { ok: false, error: error.message || 'Não foi possível criar a conta.' }
     }
@@ -425,6 +422,7 @@ function App() {
         body: JSON.stringify({ email: cleanEmail, senha: passwordHash }),
       })
       const account = mapApiUser(user)
+      if (!account?.id) throw new Error('A API não retornou o usuário autenticado.')
       localStorage.setItem(AUTH_SESSION_KEY, account.id)
       setAuthUser(account)
       loadWorkspace(account)
@@ -446,15 +444,8 @@ function App() {
   }
 
   const addTransaction = async form => {
-    if (!USE_API) {
-      const item = { ...form, id: crypto.randomUUID(), description: form.description.trim(), value: fromCents(toCents(form.value)), periodicity: form.periodicity === 'Mensal' ? 'Mensal' : 'Única' }
-      persist('transactions', [item, ...transactions], setTransactions)
-      setModal(null)
-      notify('Lançamento salvo neste navegador.')
-      return
-    }
     try {
-      const databaseUser = await ensureDatabaseUser(authUser)
+      const databaseUser = authUser
       const isExpense = form.type === 'expense'
       const saved = await apiRequest(isExpense ? '/despesas' : '/rendas', {
         method: 'POST',
@@ -485,12 +476,6 @@ function App() {
   }
 
   const updateTransaction = async (id, form) => {
-    if (!USE_API) {
-      persist('transactions', transactions.map(item => item.id === id ? { ...item, ...form, id, description: form.description.trim(), value: fromCents(toCents(form.value)), periodicity: form.periodicity === 'Mensal' ? 'Mensal' : 'Única' } : item), setTransactions)
-      setModal(null)
-      notify('Lançamento atualizado neste navegador.')
-      return
-    }
     const current = transactions.find(item => item.id === id)
     if (!current?.databaseId) return notify('Este lançamento não está vinculado ao banco de dados.', 'warning')
     try {
@@ -517,12 +502,6 @@ function App() {
   }
 
   const removeTransaction = async id => {
-    if (!USE_API) {
-      persist('transactions', transactions.filter(item => item.id !== id), setTransactions)
-      setModal(null)
-      notify('Lançamento excluído deste navegador.')
-      return
-    }
     const current = transactions.find(item => item.id === id)
     if (!current?.databaseId) return notify('Este lançamento não está vinculado ao banco de dados.', 'warning')
     try {
@@ -616,7 +595,7 @@ function App() {
 
     try {
       const user = await apiRequest(`/usuarios/${encodeURIComponent(authUser.id)}`, {
-        method: 'PATCH',
+        method: 'PUT',
         body: JSON.stringify({ nome: normalized.name, email: normalized.email }),
       })
       const updatedAccount = mapApiUser(user)
@@ -640,7 +619,7 @@ function App() {
       })
 
       const user = await apiRequest(`/usuarios/${encodeURIComponent(authUser.id)}`, {
-        method: 'PATCH',
+        method: 'PUT',
         body: JSON.stringify({ senha: newHash }),
       })
 
@@ -671,7 +650,7 @@ function App() {
   }
 
   const resetWorkspace = () => {
-    if (USE_API) return notify('A redefinição está disponível somente no modo local. Exclua os lançamentos individualmente no modo API.', 'warning')
+    if (transactions.length) return notify('Exclua os lançamentos individualmente antes de redefinir as metas e categorias.', 'warning')
     persist('transactions', [], setTransactions)
     localStorage.setItem(userStorageKey(authUser.id, 'goals'), JSON.stringify([]))
     localStorage.setItem(userStorageKey(authUser.id, 'categories'), JSON.stringify(initialCategories))
@@ -681,14 +660,21 @@ function App() {
     notify('Dados financeiros desta conta foram redefinidos.', 'warning')
   }
 
+  const completeRegistration = account => {
+    if (!account?.id) return
+    localStorage.setItem(AUTH_SESSION_KEY, account.id)
+    setAuthUser(account)
+    loadWorkspace(account)
+  }
+
   if (authChecking) return <div className="auth-loading">Conectando ao CustosVision...</div>
-  if (!authUser) return <AuthScreen onLogin={login} onRegister={register} />
+  if (!authUser) return <AuthScreen onLogin={login} onRegister={register} onRegistrationComplete={completeRegistration} />
 
   return (
     <div className="app-shell">
       <Sidebar page={page} setPage={setPage} profile={profile} overdueCount={overdueGoals.length} onLogout={() => setModal({ type: 'logout' })} />
       <main className="main-content">
-        <p role="status" style={{ margin: 0, padding: '10px 24px', background: '#eaf8f1', fontSize: 12 }}>{USE_API ? 'Modo API: rendas e despesas usam o banco; login e metas continuam locais.' : 'Modo local: dados salvos neste navegador. Sem conexão com o banco de dados.'}</p>
+        <p role="status" style={{ margin: 0, padding: '10px 24px', background: '#eaf8f1', fontSize: 12 }}>{'Conta e lançamentos na API; metas e categorias salvas neste navegador.'}</p>
         <Topbar page={page} setPage={setPage} profile={profile} overdueCount={overdueGoals.length} />
 
         {page === 'dashboard' && <Dashboard totals={totals} transactions={transactions} goals={goals} categories={categories} profile={profile} setPage={setPage} setModal={setModal} />}
@@ -716,7 +702,7 @@ function App() {
   )
 }
 
-function AuthScreen({ onLogin, onRegister }) {
+function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
   const [mode, setMode] = useState('login')
   const [name, setName] = useState('')
   const [cpf, setCpf] = useState('')
@@ -726,6 +712,7 @@ function AuthScreen({ onLogin, onRegister }) {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [registeredAccount, setRegisteredAccount] = useState(null)
   const strength = passwordStrength(password)
 
   const changeMode = nextMode => {
@@ -734,6 +721,7 @@ function AuthScreen({ onLogin, onRegister }) {
     setPassword('')
     setConfirmPassword('')
     setShowPassword(false)
+    setRegisteredAccount(null)
   }
 
   const submit = async event => {
@@ -743,7 +731,56 @@ function AuthScreen({ onLogin, onRegister }) {
     setLoading(true)
     const result = mode === 'login' ? await onLogin({ email, password }) : await onRegister({ name, cpf, email, password })
     setLoading(false)
-    if (!result?.ok) setError(result?.error || 'Não foi possível continuar.')
+    if (!result?.ok) {
+      setError(result?.error || 'Não foi possível continuar.')
+      return
+    }
+    if (mode === 'register' && result.account) setRegisteredAccount(result.account)
+  }
+
+  if (registeredAccount) {
+    return (
+      <main className="auth-page">
+        <section className="auth-shell">
+          <div className="auth-intro">
+            <Logo />
+            <div className="auth-copy">
+              <span className="auth-kicker">SEU DINHEIRO, COM MAIS CLAREZA</span>
+              <h1>Controle financeiro que você entende de verdade.</h1>
+              <p>Registre movimentações, acompanhe metas e transforme números em decisões simples para o seu dia a dia.</p>
+            </div>
+            <div className="auth-preview" aria-hidden="true">
+              <div className="preview-top"><span>Saldo disponível</span><b>+12,4%</b></div>
+              <strong>R$ 4.286,40</strong>
+              <div className="preview-bars"><i /><i /><i /><i /><i /><i /><i /></div>
+              <div className="preview-legend"><span><b className="dot green" />Receitas</span><span><b className="dot purple" />Economia</span></div>
+            </div>
+            <div className="auth-benefits">
+              <div><span>↗</span><p><strong>Visão completa</strong>Receitas e despesas organizadas em poucos cliques.</p></div>
+              <div><span>◎</span><p><strong>Metas claras</strong>Progresso, prazo e quanto ainda falta em um só lugar.</p></div>
+              <div><span>⌁</span><p><strong>Dados por conta</strong>Cada usuário mantém sua própria visão financeira.</p></div>
+            </div>
+            <small>CustosVision • Projeto Integrador</small>
+          </div>
+
+          <div className="auth-card-wrap">
+            <div className="auth-card auth-success-card">
+              <div className="auth-mobile-brand"><Logo /></div>
+              <div className="success-icon" aria-hidden="true">✓</div>
+              <span className="auth-mini-kicker">TUDO CERTO</span>
+              <h2>Cadastro criado com sucesso!</h2>
+              <p className="success-message">Sua conta foi criada e já está pronta para você começar a organizar sua vida financeira.</p>
+              <div className="success-account">
+                <span>Conta cadastrada</span>
+                <strong>{registeredAccount.email}</strong>
+              </div>
+              <button className="btn primary auth-submit" type="button" onClick={() => onRegistrationComplete(registeredAccount)}>Acessar minha conta</button>
+              <button className="success-back" type="button" onClick={() => changeMode('login')}>Voltar para o login</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -799,7 +836,7 @@ function AuthScreen({ onLogin, onRegister }) {
             </form>
 
             <p className="auth-switch">{mode === 'login' ? 'Ainda não tem uma conta?' : 'Já possui uma conta?'} <button type="button" onClick={() => changeMode(mode === 'login' ? 'register' : 'login')}>{mode === 'login' ? 'Criar conta' : 'Entrar'}</button></p>
-            <p className="auth-local-note">Protótipo acadêmico: a autenticação e os dados ficam armazenados localmente neste navegador.</p>
+            <p className="auth-local-note">Protótipo acadêmico: conta e lançamentos usam a API; metas e categorias ficam neste navegador.</p>
           </div>
         </div>
       </section>
@@ -1510,7 +1547,7 @@ function PasswordModal({ onClose, onSubmit }) {
     if (result && !result.ok) setError(result.error)
   }
 
-  return <Modal title="Alterar senha" subtitle="Confirme sua senha atual e defina uma nova." onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Senha atual</span><input autoFocus required type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} placeholder="Digite sua senha atual" /></label><label className="field full-field"><span>Nova senha</span><input required minLength="6" type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo de 6 caracteres" /></label><div className="password-strength full-field"><div>{[0,1,2,3,4].map(index => <i key={index} className={index < strength.score ? 'active' : ''} />)}</div><span>{strength.label}</span></div><label className="field full-field"><span>Confirmar nova senha</span><input required minLength="6" type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="Digite a senha novamente" /></label>{error && <div className="form-error full-field">{error}</div>}<p className="password-note full-field">A autenticação desta apresentação é validada pelo backend e armazenada no MySQL local.</p><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar nova senha'}</button></div></form></Modal>
+  return <Modal title="Alterar senha" subtitle="Confirme sua senha atual e defina uma nova." onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Senha atual</span><input autoFocus required type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} placeholder="Digite sua senha atual" /></label><label className="field full-field"><span>Nova senha</span><input required minLength="6" type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo de 6 caracteres" /></label><div className="password-strength full-field"><div>{[0,1,2,3,4].map(index => <i key={index} className={index < strength.score ? 'active' : ''} />)}</div><span>{strength.label}</span></div><label className="field full-field"><span>Confirmar nova senha</span><input required minLength="6" type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="Digite a senha novamente" /></label>{error && <div className="form-error full-field">{error}</div>}<p className="password-note full-field">A autenticação desta apresentação é validada pelo backend.</p><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar nova senha'}</button></div></form></Modal>
 }
 
 function CategoryModal({ onClose, onSubmit }) {
