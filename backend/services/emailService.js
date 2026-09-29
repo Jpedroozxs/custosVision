@@ -1,9 +1,13 @@
 const { Resend } = require('resend');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function enviarCodigoVerificacao(email, codigo) {
 
+    if (!process.env.RESEND_API_KEY) {
+        throw new Error('RESEND_API_KEY não configurada no backend/.env.');
+    }
+
+    const resend = new Resend(process.env.RESEND_API_KEY);
     const { data, error } = await resend.emails.send({
         from: 'Custos Vision <onboarding@resend.dev>',
         to: [email],
