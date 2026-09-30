@@ -20,7 +20,9 @@ async function buscarPorId(req, res) {
 }
 
 async function cadastrar(req, res) {
-    try { const row = await model.cadastrar(new CriarDespesaDTO(req.body)); return res.status(201).json(new ResponseDespesaDTO(row)); }
+    try { const row = await model.cadastrar(new CriarDespesaDTO(req.body)); 
+        return res.status(201).json(new ResponseDespesaDTO(row)); 
+    }
     catch (error) {
         console.error(error);
         return res.status(500).json({ erro: 'Erro ao cadastrar despesa.', detalhe: error.message });
