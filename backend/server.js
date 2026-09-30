@@ -23,7 +23,12 @@ app.use('/api/metas', require('./routes/metaRoutes'));
 
 app.use('/api/aportes-meta', require('./routes/aporteMetaRoutes'));
 
+app.use('/api/cpf', require('./routes/cpfRoutes'));
+
+app.use('/api/email', require('./routes/emailRoutes'));
+
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
+
 
 async function iniciar() {
   try { await testarConexao(); }

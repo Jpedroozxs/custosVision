@@ -630,7 +630,6 @@ function App() {
       return { ok: true }
     } catch (error) {
       const errorMessage = error.status === 401 ? 'A senha atual está incorreta.' : (error.message || 'Não foi possível alterar a senha.')
-      notify(errorMessage, 'error')
       return { ok: false, error: errorMessage }
     }
   }
@@ -714,7 +713,6 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [registeredAccount, setRegisteredAccount] = useState(null)
-  const [feedback, setFeedback] = useState(null)
   const strength = passwordStrength(password)
 
   const changeMode = nextMode => {
@@ -724,7 +722,6 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
     setConfirmPassword('')
     setShowPassword(false)
     setRegisteredAccount(null)
-    setFeedback(null)
   }
 
   const submit = async event => {
@@ -740,15 +737,10 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
     const result = mode === 'login' ? await onLogin({ email, password }) : await onRegister({ name, cpf, email, password })
     setLoading(false)
     if (!result?.ok) {
-      const message = result?.error || 'Não foi possível continuar.'
-      setError(message)
-      setFeedback({ id: Date.now(), message, tone: 'error' })
+      setError(result?.error || 'Não foi possível continuar.')
       return
     }
-    if (mode === 'register' && result.account) {
-      setRegisteredAccount(result.account)
-      setFeedback({ id: Date.now(), message: 'Sua conta foi criada com sucesso e já está pronta para uso.', tone: 'success' })
-    }
+    if (mode === 'register' && result.account) setRegisteredAccount(result.account)
   }
 
   if (registeredAccount) {
@@ -792,7 +784,6 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
             </div>
           </div>
         </section>
-        {feedback && <Toast toast={feedback} onClose={() => setFeedback(null)} />}
       </main>
     )
   }
