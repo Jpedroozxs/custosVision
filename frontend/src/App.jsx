@@ -350,7 +350,7 @@ function App() {
 
   useEffect(() => {
     if (!toast) return undefined
-    const timer = setTimeout(() => setToast(null), toast.tone === 'warning' ? 4200 : 2800)
+    const timer = setTimeout(() => setToast(null), toast.tone === 'warning' || toast.tone === 'error' ? 5200 : 3800)
     return () => clearTimeout(timer)
   }, [toast])
 
@@ -567,8 +567,8 @@ function App() {
 
   const addCategory = name => {
     const cleanName = name.trim()
-    if (!cleanName) return { ok: false, error: 'Informe um nome para a categoria.' }
-    if (categories.some(category => category.toLowerCase() === cleanName.toLowerCase())) return { ok: false, error: 'Essa categoria já existe.' }
+    if (!cleanName) { notify('Informe um nome para a categoria.', 'warning'); return { ok: false, error: 'Informe um nome para a categoria.' } }
+    if (categories.some(category => category.toLowerCase() === cleanName.toLowerCase())) { notify('Essa categoria já existe.', 'warning'); return { ok: false, error: 'Essa categoria já existe.' } }
     persist('categories', [...categories, cleanName], setCategories)
     setModal(null)
     notify('Categoria criada.')
@@ -630,6 +630,7 @@ function App() {
       return { ok: true }
     } catch (error) {
       const errorMessage = error.status === 401 ? 'A senha atual está incorreta.' : (error.message || 'Não foi possível alterar a senha.')
+      notify(errorMessage, 'error')
       return { ok: false, error: errorMessage }
     }
   }
@@ -713,6 +714,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [registeredAccount, setRegisteredAccount] = useState(null)
+  const [feedback, setFeedback] = useState(null)
   const strength = passwordStrength(password)
 
   const changeMode = nextMode => {
@@ -722,20 +724,31 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
     setConfirmPassword('')
     setShowPassword(false)
     setRegisteredAccount(null)
+    setFeedback(null)
   }
 
   const submit = async event => {
     event.preventDefault()
     setError('')
-    if (mode === 'register' && password !== confirmPassword) return setError('As senhas não coincidem.')
+    if (mode === 'register' && password !== confirmPassword) {
+      const message = 'As senhas não coincidem.'
+      setError(message)
+      setFeedback({ id: Date.now(), message, tone: 'error' })
+      return
+    }
     setLoading(true)
     const result = mode === 'login' ? await onLogin({ email, password }) : await onRegister({ name, cpf, email, password })
     setLoading(false)
     if (!result?.ok) {
-      setError(result?.error || 'Não foi possível continuar.')
+      const message = result?.error || 'Não foi possível continuar.'
+      setError(message)
+      setFeedback({ id: Date.now(), message, tone: 'error' })
       return
     }
-    if (mode === 'register' && result.account) setRegisteredAccount(result.account)
+    if (mode === 'register' && result.account) {
+      setRegisteredAccount(result.account)
+      setFeedback({ id: Date.now(), message: 'Sua conta foi criada com sucesso e já está pronta para uso.', tone: 'success' })
+    }
   }
 
   if (registeredAccount) {
@@ -779,6 +792,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
             </div>
           </div>
         </section>
+        {feedback && <Toast toast={feedback} onClose={() => setFeedback(null)} />}
       </main>
     )
   }
@@ -840,6 +854,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
           </div>
         </div>
       </section>
+      {feedback && <Toast toast={feedback} onClose={() => setFeedback(null)} />}
     </main>
   )
 }
@@ -1294,7 +1309,7 @@ function GoalCard({ goal, onContribution, onEdit, onDelete }) {
   }
 
   return (
-    <article className="goal-card">
+    <article className={`goal-card ${status === 'Concluída' ? 'goal-card-complete' : status === 'Vencida' ? 'goal-card-overdue' : 'goal-card-active'}`}>
 
       <div className="goal-card-header">
         <div>
@@ -1566,8 +1581,25 @@ function ConfirmModal({ title, text, confirmLabel, danger = false, onClose, onCo
 }
 
 function Toast({ toast, onClose }) {
-  const icons = { success: '✓', warning: '!', error: '×' }
-  return <div className={`toast ${toast.tone || 'success'}`} role="status"><span>{icons[toast.tone] || icons.success}</span><p>{toast.message}</p><button onClick={onClose} aria-label="Fechar aviso">×</button></div>
+  const tone = toast.tone || 'success'
+  const config = {
+    success: { icon: '✓', eyebrow: 'Tudo certo', title: 'Operação concluída' },
+    warning: { icon: '!', eyebrow: 'Atenção', title: 'Verifique esta informação' },
+    error: { icon: '×', eyebrow: 'Não foi possível concluir', title: 'Algo deu errado' },
+  }[tone] || { icon: '✓', eyebrow: 'Tudo certo', title: 'Operação concluída' }
+
+  return (
+    <div className="feedback-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className={`feedback-popup ${tone}`} role="status" aria-live="polite" onMouseDown={event => event.stopPropagation()}>
+        <button className="feedback-close" type="button" onClick={onClose} aria-label="Fechar aviso">×</button>
+        <div className="feedback-icon" aria-hidden="true">{config.icon}</div>
+        <span className="feedback-eyebrow">{config.eyebrow}</span>
+        <h3>{config.title}</h3>
+        <p>{toast.message}</p>
+        <button className="btn primary feedback-action" type="button" onClick={onClose}>Entendi</button>
+      </section>
+    </div>
+  )
 }
 
 function EmptyState({ title, text, action, onAction }) {
