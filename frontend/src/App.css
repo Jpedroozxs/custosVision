@@ -339,3 +339,334 @@ tbody tr:last-child td { border-bottom: 0; }
 .success-back { margin-top: 14px; border: 0; background: transparent; color: #168b60; font-size: 9.5px; font-weight: 800; cursor: pointer; }
 .success-back:hover { text-decoration: underline; }
 @media(max-width:480px){.success-icon{width:68px;height:68px;font-size:32px;margin-top:26px}.auth-success-card h2{font-size:25px}.success-message{font-size:10.5px}}
+
+/* Cartões da página de Metas — melhoria visual isolada do restante do frontend. */
+.goal-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 365px;
+  padding: 22px;
+  border: 1px solid #e7ebe9;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdfc 100%);
+  box-shadow: 0 8px 24px rgba(31, 45, 39, .055);
+  transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
+}
+.goal-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, #178b60, #58bd8f);
+}
+.goal-card::after {
+  content: '';
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  top: -95px;
+  right: -70px;
+  border-radius: 50%;
+  background: rgba(23, 139, 96, .055);
+  pointer-events: none;
+}
+.goal-card:hover {
+  transform: translateY(-4px);
+  border-color: #d9e8e1;
+  box-shadow: 0 16px 38px rgba(31, 45, 39, .09);
+}
+.goal-card.goal-card-overdue::before { background: linear-gradient(90deg, #d85d56, #ef9993); }
+.goal-card.goal-card-overdue { border-color: #f0d4d1; background: linear-gradient(180deg, #fff 0%, #fffbfb 100%); }
+.goal-card.goal-card-overdue::after { background: rgba(216, 93, 86, .05); }
+.goal-card.goal-card-complete::before { background: linear-gradient(90deg, #168b60, #62c89b); }
+
+.goal-card-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 64px;
+}
+.goal-card-header > div:first-child { min-width: 0; }
+.goal-card-header .status-inline {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .25px;
+  text-transform: uppercase;
+}
+.goal-card-header .status-inline.pending { color: #a66c12; background: #fff4df; border: 1px solid #f4dfb8; }
+.goal-card-header .status-inline.done { color: #147a55; background: #eaf8f1; border: 1px solid #cfeee0; }
+.goal-card-header .status-inline.danger { color: #c6514b; background: #fff0ef; border: 1px solid #f3d3d0; }
+.goal-card h3 {
+  margin: 11px 0 0;
+  color: #27312e;
+  font-size: 15px;
+  line-height: 1.25;
+  letter-spacing: -.18px;
+  overflow-wrap: anywhere;
+}
+.goal-card-actions { display: flex; align-items: center; gap: 5px; }
+.goal-card-actions .icon-button {
+  width: 31px;
+  height: 31px;
+  border: 1px solid #edf0ee;
+  background: rgba(255,255,255,.85);
+  box-shadow: 0 2px 8px rgba(42, 55, 49, .035);
+}
+.goal-card-actions .icon-button:hover { border-color: #dce4e0; background: #f5f8f6; }
+.goal-card-actions .icon-button.danger:hover { border-color: #f0d0cd; background: #fff2f1; }
+
+.goal-values {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+.goal-values > div {
+  padding: 13px 14px;
+  border: 1px solid #edf1ef;
+  border-radius: 13px;
+  background: rgba(248, 251, 249, .9);
+}
+.goal-values span,
+.goal-card-details span {
+  display: block;
+  margin-bottom: 4px;
+  color: #9aa39f;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+.goal-values strong { display: block; color: #38433f; font-size: 13px; }
+.goal-values > div:first-child strong { color: #168b60; }
+
+.goal-card .goal-progress-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 19px;
+  color: #808a86;
+  font-size: 9px;
+  font-weight: 700;
+}
+.goal-card .goal-progress-info strong { color: #168b60; font-size: 11px; }
+.goal-card.goal-card-overdue .goal-progress-info strong { color: #cf5a53; }
+.goal-card .goal-progress-bar {
+  height: 9px;
+  margin: 8px 0 0;
+  border-radius: 999px;
+  background: #edf1ef;
+  overflow: hidden;
+}
+.goal-card .goal-progress-bar i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #178b60, #58bd8f);
+  box-shadow: 0 0 0 1px rgba(23, 139, 96, .03);
+  transition: width .35s ease;
+}
+.goal-card.goal-card-overdue .goal-progress-bar i { background: linear-gradient(90deg, #d85d56, #ec8b84); }
+
+.goal-card-details {
+  display: grid;
+  grid-template-columns: .8fr 1.2fr;
+  gap: 10px;
+  margin-top: 17px;
+  padding-top: 16px;
+  border-top: 1px solid #edf0ee;
+}
+.goal-card-details strong {
+  display: block;
+  color: #59635f;
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+.goal-card-details > div:first-child strong { color: #3c4944; font-size: 11px; }
+.goal-deadline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 13px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #f4f7f5;
+  color: #7f8985;
+  font-size: 8.8px;
+  font-weight: 700;
+}
+.goal-card.goal-card-overdue .goal-deadline { background: #fff1f0; color: #c95a54; }
+.goal-card.goal-card-complete .goal-deadline { background: #edf9f3; color: #16845c; }
+.goal-deadline > span:first-child { font-size: 12px; }
+
+.goal-contribution-button {
+  width: 100%;
+  margin-top: 15px;
+  min-height: 38px;
+  border-radius: 11px;
+  box-shadow: 0 7px 16px rgba(23, 139, 96, .12);
+}
+.goal-card.goal-card-overdue .goal-contribution-button { box-shadow: none; }
+
+@media(max-width:760px){
+  .goal-card { min-height: 0; padding: 19px; border-radius: 17px; }
+  .goal-values { grid-template-columns: 1fr 1fr; }
+}
+@media(max-width:400px){
+  .goal-values,.goal-card-details { grid-template-columns: 1fr; }
+}
+
+/* ===== Feedback centralizado - CustosVision ===== */
+.feedback-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 24, 31, .48);
+  backdrop-filter: blur(8px);
+  animation: feedbackFade .18s ease-out;
+}
+.feedback-popup {
+  position: relative;
+  width: min(540px, 100%);
+  min-height: 330px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 42px 42px 34px;
+  overflow: hidden;
+  text-align: center;
+  background: #fff;
+  border: 1px solid #e8ecef;
+  border-radius: 28px;
+  box-shadow: 0 34px 90px rgba(18, 29, 36, .28);
+  animation: feedbackPop .24s cubic-bezier(.2,.8,.2,1);
+}
+.feedback-popup::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 6px;
+  background: linear-gradient(90deg, #168b60, #39b985);
+}
+.feedback-popup.warning::before { background: linear-gradient(90deg, #d28a22, #f0b84f); }
+.feedback-popup.error::before { background: linear-gradient(90deg, #d65c55, #ef8a82); }
+.feedback-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: #f4f6f7;
+  color: #7c8591;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: .18s ease;
+}
+.feedback-close:hover { background: #eceff1; color: #39434e; transform: scale(1.04); }
+.feedback-icon {
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 20px;
+  border-radius: 26px;
+  background: linear-gradient(145deg, #e7f8f0, #d5f1e4);
+  border: 1px solid #c7ead9;
+  color: #168b60;
+  font-size: 40px;
+  font-weight: 900;
+  box-shadow: 0 16px 36px rgba(22, 139, 96, .14);
+}
+.feedback-popup.warning .feedback-icon {
+  background: linear-gradient(145deg, #fff6e6, #ffedcb);
+  border-color: #f6d99f;
+  color: #b77412;
+  box-shadow: 0 16px 36px rgba(183, 116, 18, .12);
+}
+.feedback-popup.error .feedback-icon {
+  background: linear-gradient(145deg, #fff0ef, #ffe1de);
+  border-color: #f4c7c3;
+  color: #c95049;
+  box-shadow: 0 16px 36px rgba(201, 80, 73, .12);
+}
+.feedback-eyebrow {
+  margin-bottom: 7px;
+  color: #168b60;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1.45px;
+  text-transform: uppercase;
+}
+.feedback-popup.warning .feedback-eyebrow { color: #b77412; }
+.feedback-popup.error .feedback-eyebrow { color: #c95049; }
+.feedback-popup h3 {
+  margin: 0;
+  color: #202838;
+  font-size: 24px;
+  line-height: 1.2;
+  letter-spacing: -.55px;
+}
+.feedback-popup p {
+  max-width: 410px;
+  margin: 13px auto 26px;
+  color: #77818d;
+  font-size: 13px;
+  line-height: 1.65;
+  font-weight: 600;
+}
+.feedback-action {
+  min-width: 160px;
+  min-height: 44px;
+  border-radius: 12px;
+}
+.feedback-popup.warning .feedback-action { background: #b77412; border-color: #b77412; }
+.feedback-popup.error .feedback-action { background: #c95049; border-color: #c95049; }
+@keyframes feedbackFade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes feedbackPop { from { opacity: 0; transform: translateY(12px) scale(.96) } to { opacity: 1; transform: translateY(0) scale(1) } }
+
+/* Modais de criação/edição maiores e sempre centralizados */
+.modal-backdrop { padding: 24px; align-items: center; }
+.modal { width: min(650px, 100%); padding: 30px; border-radius: 24px; }
+.modal-narrow { width: min(520px, 100%); }
+.modal-head h3 { font-size: 20px; }
+.modal-head p { font-size: 11px; max-width: 500px; }
+.modal-head > button { width: 38px; height: 38px; flex-basis: 38px; border-radius: 12px; }
+.modal-actions { margin-top: 12px; gap: 10px; }
+.confirm-box { padding: 16px; border-radius: 15px; }
+.confirm-box > span { width: 38px; height: 38px; border-radius: 12px; }
+.confirm-box p { font-size: 11px; line-height: 1.5; }
+.form-error { padding: 13px 14px; border-radius: 12px; font-size: 10.5px; }
+
+@media(max-width: 480px) {
+  .modal-backdrop { padding: 14px; align-items: center; }
+  .modal { width: 100%; max-height: calc(100vh - 28px); border-radius: 22px; padding: 22px; }
+  .feedback-backdrop { padding: 16px; }
+  .feedback-popup { min-height: 310px; padding: 38px 24px 28px; border-radius: 24px; }
+  .feedback-icon { width: 74px; height: 74px; border-radius: 22px; font-size: 34px; }
+  .feedback-popup h3 { font-size: 21px; }
+  .feedback-popup p { font-size: 12px; }
+  .feedback-action { width: 100%; }
+}
