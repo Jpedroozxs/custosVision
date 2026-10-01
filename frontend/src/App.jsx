@@ -383,10 +383,7 @@ function App() {
 
   useEffect(() => {
     if (!toast) return undefined
-    const timer = setTimeout(
-      () => setToast(null),
-      toast.tone === 'warning' || toast.tone === 'error' ? 5200 : 3800,
-    )
+    const timer = setTimeout(() => setToast(null), toast.tone === 'warning' || toast.tone === 'error' ? 5200 : 3800)
     return () => clearTimeout(timer)
   }, [toast])
 
@@ -667,25 +664,12 @@ function App() {
   }
   const addCategory = async (name) => {
     const cleanName = name.trim()
-    if (!cleanName || categories.some((item) => item.toLowerCase() === cleanName.toLowerCase())) {
-      const error = cleanName ? 'Essa categoria já existe.' : 'Informe um nome para a categoria.'
-      notify(error, 'warning')
-      return { ok: false, error }
-    }
-    try {
-      const saved = await apiRequest('/categorias', {
-        method: 'POST',
-        body: JSON.stringify({ nome: cleanName }),
-      })
-      setDatabaseCategories((items) => [...items, saved])
-      setCategories((items) => [...items, saved.nome])
-      setModal(null)
-      notify('Categoria criada.')
-      return { ok: true }
-    } catch (error) {
-      notify(error.message, 'error')
-      return { ok: false, error: error.message }
-    }
+    if (!cleanName) { notify('Informe um nome para a categoria.', 'warning'); return { ok: false, error: 'Informe um nome para a categoria.' } }
+    if (categories.some(category => category.toLowerCase() === cleanName.toLowerCase())) { notify('Essa categoria já existe.', 'warning'); return { ok: false, error: 'Essa categoria já existe.' } }
+    persist('categories', [...categories, cleanName], setCategories)
+    setModal(null)
+    notify('Categoria criada.')
+    return { ok: true }
   }
   const removeCategory = async (category) => {
     try {
@@ -742,10 +726,7 @@ function App() {
       notify('Senha atualizada com sucesso.')
       return { ok: true }
     } catch (error) {
-      const errorMessage =
-        error.status === 401
-          ? 'A senha atual está incorreta.'
-          : error.message || 'Não foi possível alterar a senha.'
+      const errorMessage = error.status === 401 ? 'A senha atual está incorreta.' : (error.message || 'Não foi possível alterar a senha.')
       notify(errorMessage, 'error')
       return { ok: false, error: errorMessage }
     }
@@ -789,31 +770,15 @@ function App() {
     }
   }
 
-  const completeRegistration = (account) => {
+  const completeRegistration = account => {
     if (!account?.id) return
     localStorage.setItem(AUTH_SESSION_KEY, account.id)
     setAuthUser(account)
     loadWorkspace(account)
   }
 
-  if (authChecking || (authUser && workspaceLoading))
-    return <div className="auth-loading">Conectando ao CustosVision...</div>
-  if (authUser && workspaceError)
-    return (
-      <div className="auth-loading">
-        <p role="alert">{workspaceError}</p>
-        <button onClick={() => window.location.reload()}>Tentar novamente</button>
-        <button onClick={logout}>Voltar ao login</button>
-      </div>
-    )
-  if (!authUser)
-    return (
-      <AuthScreen
-        onLogin={login}
-        onRegister={register}
-        onRegistrationComplete={completeRegistration}
-      />
-    )
+  if (authChecking) return <div className="auth-loading">Conectando ao CustosVision...</div>
+  if (!authUser) return <AuthScreen onLogin={login} onRegister={register} onRegistrationComplete={completeRegistration} />
 
   return (
     <div className="app-shell">
@@ -1009,11 +974,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
     }
     if (mode === 'register' && result.account) {
       setRegisteredAccount(result.account)
-      setFeedback({
-        id: Date.now(),
-        message: 'Sua conta foi criada com sucesso e já está pronta para uso.',
-        tone: 'success',
-      })
+      setFeedback({ id: Date.now(), message: 'Sua conta foi criada com sucesso e já está pronta para uso.', tone: 'success' })
     }
   }
 
@@ -1026,88 +987,35 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
             <div className="auth-copy">
               <span className="auth-kicker">SEU DINHEIRO, COM MAIS CLAREZA</span>
               <h1>Controle financeiro que você entende de verdade.</h1>
-              <p>
-                Registre movimentações, acompanhe metas e transforme números em decisões simples
-                para o seu dia a dia.
-              </p>
+              <p>Registre movimentações, acompanhe metas e transforme números em decisões simples para o seu dia a dia.</p>
             </div>
             <div className="auth-preview" aria-hidden="true">
-              <div className="preview-top">
-                <span>Saldo disponível</span>
-                <b>+12,4%</b>
-              </div>
+              <div className="preview-top"><span>Saldo disponível</span><b>+12,4%</b></div>
               <strong>R$ 4.286,40</strong>
-              <div className="preview-bars">
-                <i />
-                <i />
-                <i />
-                <i />
-                <i />
-                <i />
-                <i />
-              </div>
-              <div className="preview-legend">
-                <span>
-                  <b className="dot green" />
-                  Receitas
-                </span>
-                <span>
-                  <b className="dot purple" />
-                  Economia
-                </span>
-              </div>
+              <div className="preview-bars"><i /><i /><i /><i /><i /><i /><i /></div>
+              <div className="preview-legend"><span><b className="dot green" />Receitas</span><span><b className="dot purple" />Economia</span></div>
             </div>
             <div className="auth-benefits">
-              <div>
-                <span>↗</span>
-                <p>
-                  <strong>Visão completa</strong>Receitas e despesas organizadas em poucos cliques.
-                </p>
-              </div>
-              <div>
-                <span>◎</span>
-                <p>
-                  <strong>Metas claras</strong>Progresso, prazo e quanto ainda falta em um só lugar.
-                </p>
-              </div>
-              <div>
-                <span>⌁</span>
-                <p>
-                  <strong>Dados por conta</strong>Cada usuário mantém sua própria visão financeira.
-                </p>
-              </div>
+              <div><span>↗</span><p><strong>Visão completa</strong>Receitas e despesas organizadas em poucos cliques.</p></div>
+              <div><span>◎</span><p><strong>Metas claras</strong>Progresso, prazo e quanto ainda falta em um só lugar.</p></div>
+              <div><span>⌁</span><p><strong>Dados por conta</strong>Cada usuário mantém sua própria visão financeira.</p></div>
             </div>
             <small>CustosVision • Projeto Integrador</small>
           </div>
 
           <div className="auth-card-wrap">
             <div className="auth-card auth-success-card">
-              <div className="auth-mobile-brand">
-                <Logo />
-              </div>
-              <div className="success-icon" aria-hidden="true">
-                ✓
-              </div>
+              <div className="auth-mobile-brand"><Logo /></div>
+              <div className="success-icon" aria-hidden="true">✓</div>
               <span className="auth-mini-kicker">TUDO CERTO</span>
               <h2>Cadastro criado com sucesso!</h2>
-              <p className="success-message">
-                Sua conta foi criada e já está pronta para você começar a organizar sua vida
-                financeira.
-              </p>
+              <p className="success-message">Sua conta foi criada e já está pronta para você começar a organizar sua vida financeira.</p>
               <div className="success-account">
                 <span>Conta cadastrada</span>
                 <strong>{registeredAccount.email}</strong>
               </div>
-              <button
-                className="btn primary auth-submit"
-                type="button"
-                onClick={() => onRegistrationComplete(registeredAccount)}
-              >
-                Acessar minha conta
-              </button>
-              <button className="success-back" type="button" onClick={() => changeMode('login')}>
-                Voltar para o login
-              </button>
+              <button className="btn primary auth-submit" type="button" onClick={() => onRegistrationComplete(registeredAccount)}>Acessar minha conta</button>
+              <button className="success-back" type="button" onClick={() => changeMode('login')}>Voltar para o login</button>
             </div>
           </div>
         </section>
@@ -2490,9 +2398,8 @@ function GoalCard({ goal, onContribution, onEdit, onDelete }) {
   }
 
   return (
-    <article
-      className={`goal-card ${status === 'Concluída' ? 'goal-card-complete' : status === 'Vencida' ? 'goal-card-overdue' : 'goal-card-active'}`}
-    >
+    <article className={`goal-card ${status === 'Concluída' ? 'goal-card-complete' : status === 'Vencida' ? 'goal-card-overdue' : 'goal-card-active'}`}>
+
       <div className="goal-card-header">
         <div>
           <span
@@ -3312,29 +3219,13 @@ function Toast({ toast, onClose }) {
 
   return (
     <div className="feedback-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        className={`feedback-popup ${tone}`}
-        role="status"
-        aria-live="polite"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <button
-          className="feedback-close"
-          type="button"
-          onClick={onClose}
-          aria-label="Fechar aviso"
-        >
-          ×
-        </button>
-        <div className="feedback-icon" aria-hidden="true">
-          {config.icon}
-        </div>
+      <section className={`feedback-popup ${tone}`} role="status" aria-live="polite" onMouseDown={event => event.stopPropagation()}>
+        <button className="feedback-close" type="button" onClick={onClose} aria-label="Fechar aviso">×</button>
+        <div className="feedback-icon" aria-hidden="true">{config.icon}</div>
         <span className="feedback-eyebrow">{config.eyebrow}</span>
         <h3>{config.title}</h3>
         <p>{toast.message}</p>
-        <button className="btn primary feedback-action" type="button" onClick={onClose}>
-          Entendi
-        </button>
+        <button className="btn primary feedback-action" type="button" onClick={onClose}>Entendi</button>
       </section>
     </div>
   )
