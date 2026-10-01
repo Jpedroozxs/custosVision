@@ -32,10 +32,11 @@ async function buscarPorEmail(email) {
 // CADASTRAR
 async function cadastrarUsuario(usuario) {
     const [resposta] = await pool.query(
-        `INSERT INTO usuario (nome, email, senha)
-         VALUES (?, ?, ?)`,
+        `INSERT INTO usuario (nome, cpf, email, senha)
+         VALUES (?, ?, ?, ?)`,
         [
             usuario.nome,
+            usuario.cpf,
             usuario.email,
             usuario.senha
         ]
@@ -62,6 +63,7 @@ async function atualizacaoTotalUsuario(id, usuario) {
          WHERE id_usuario = ?`,
         [
             usuario.nome,
+            usuario.cpf,
             usuario.email,
             usuario.senha,
             id

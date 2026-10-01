@@ -1,49 +1,7 @@
 const usuarioModels = require('../infrastructure/usuarioModels');
 const { UsuarioDTO, UsuarioRespostaDTO } = require('../models/DTOs/usuarioDTO');
-const validarCPF = require('../utils/validarCpf');
-
-async function criarUsuario(req, res) {
-
-    const { nome, email, senha, cpf } = req.body;
-
-    // 1️ Valida formato básico
-    if (!nome || !email || !cpf || !senha) {
-        return res.status(400).json({ erro: 'Preencha todos os campos.' });
-    }
-
-    // 2️ Valida CPF matematicamente
-    if (!validarCPF(cpf)) {
-        return res.status(422).json({ erro: 'CPF inválido.' });
-    }
-
-    const resultadoEmail = validarEmail(email);
-
-    // 3 Valida se o email está na whitelist
-    if (!resultadoEmail.valido) {
-        return res.status(422).json({ erro: resultadoEmail.motivo });
-    }
-    
-    const emailLimpo = resultadoEmail.emailNormalizado;
-
-    // 4 Normaliza (remove pontos/traços antes de salvar no banco)
-    const cpfLimpo = String(cpf).replace(/\D/g, '');
-
-    // 5 Verifica duplicidade
-    const jaExiste = await Usuario.findOne({ where: { cpf: cpfLimpo } });
-    if (jaExiste) {
-        return res.status(409).json({ erro: 'CPF já cadastrado.' });
-    }
-
-    // 6 Cria o usuário
-    const usuario = await Usuario.create({
-        nome,
-        email,
-        cpf: cpfLimpo,   // salva SEM pontuação
-        senha           // (hash isso antes! bcrypt)
-    });
-
-    return res.status(201).json({ mensagem: 'Usuário criado.', id: usuario.id });
-};
+const { validarCPF } = require('../utils/validarCpf');
+const validarEmail = require('../utils/validarEmail');
 
 async function listar(req, res) {
     try {
@@ -70,18 +28,21 @@ async function buscarPorId(req, res) {
 
 async function cadastrar(req, res) {
     try {
-        const dto = new UsuarioDTO(req.body);
-        const sucesso = await usuarioModels.cadastrarUsuario(dto);
-        if (!sucesso) {
-            return res.status(400).json({ erro: 'Não foi possível cadastrar o usuário.' });
-        }
+        const nome = String(req.body?.nome || '').trim();
+        const cpf = String(req.body?.cpf || '').replace(/\D/g, '');
+        const senha = String(req.body?.senha || '');
+        const resultadoEmail = validarEmail(req.body?.email);
+        if (!nome || !cpf || !senha || !req.body?.email) return res.status(400).json({ erro: 'Preencha todos os campos.' });
+        if (!validarCPF(cpf)) return res.status(422).json({ erro: 'CPF inválido.' });
+        if (!resultadoEmail.valido) return res.status(422).json({ erro: resultadoEmail.motivo });
+        if (senha.length < 6) return res.status(422).json({ erro: 'A senha deve ter pelo menos 6 caracteres.' });
+        const dto = new UsuarioDTO({ nome, cpf, email: resultadoEmail.emailNormalizado, senha });
+        await usuarioModels.cadastrarUsuario(dto);
         const usuario = await usuarioModels.buscarPorEmail(dto.email);
         return res.status(201).json(new UsuarioRespostaDTO(usuario));
     } catch (e) {
         console.error(e);
-        if (e.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ erro: 'Já existe uma conta cadastrada com este e-mail.' });
-        }
+        if (e.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'CPF ou e-mail já cadastrado.' });
         return res.status(500).json({ erro: 'Erro ao cadastrar usuário.' });
     }
 }
