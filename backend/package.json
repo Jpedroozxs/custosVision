@@ -4,7 +4,9 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "ajustar-banco": "node scripts/ajustarBanco.js",
+    "test": "node --test tests/*.test.js"
   },
   "keywords": [],
   "author": "João, Geovanni, Paulo e Luciano",

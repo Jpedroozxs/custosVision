@@ -29,12 +29,20 @@ app.use('/api/email', require('./routes/emailRoutes'));
 
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
 
-
 async function iniciar() {
-  try { await testarConexao(); }
-  catch (error) { console.error('Não foi possível conectar ao MySQL:', error.message); }
+  try {
+    await testarConexao();
+  } catch (error) {
+    console.error('Não foi possível conectar ao MySQL:', error.message);
+  }
 
   app.listen(PORT, () => console.log(`API rodando em http://localhost:${PORT}`));
 }
 
-iniciar();
+app.use((erro, req, res, next) => {
+  if (erro.type === 'entity.parse.failed') return res.status(400).json({ erro: 'JSON inválido.' });
+  require('./utils/validarDados').responderErro(res, erro);
+});
+
+if (require.main === module) iniciar();
+module.exports = app;

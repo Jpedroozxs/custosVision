@@ -1,7 +1,22 @@
+const { validarValor, validarTexto, validarData, erroValidacao } = require('../utils/validarDados');
 const { pool } = require('../config/db');
 
-async function listarTodos() {
-  const [rows] = await pool.query('SELECT * FROM renda ORDER BY id_renda DESC');
+function validarLancamento(dados, criar) {
+  if (criar || dados.valor !== undefined) dados.valor = validarValor(dados.valor);
+  if (criar || dados.descricao !== undefined)
+    dados.descricao = validarTexto(dados.descricao, 'Descrição', 150);
+  if (criar || dados.tipo_renda !== undefined)
+    dados.tipo_renda = validarTexto(dados.tipo_renda, 'Categoria', 70);
+  if (criar || dados.datas !== undefined) dados.datas = validarData(dados.datas);
+  if (dados.periodicidade !== undefined && !['Mensal', 'Única'].includes(dados.periodicidade))
+    erroValidacao('Frequência inválida.');
+}
+
+async function listarTodos(idUsuario) {
+  const [rows] = await pool.query(
+    'SELECT * FROM renda WHERE id_usuario = ? ORDER BY id_renda DESC',
+    [idUsuario],
+  );
   return rows;
 }
 
@@ -11,21 +26,23 @@ async function buscarPorId(id) {
 }
 
 async function cadastrar(dados) {
-  const valor = Number(dados.valor);
-
-  if (valor > 99999999.99) {
-    throw new Error('O valor da despesa não pode ser maior que 99.999.999,99');
-  }
-  else {
-    const [result] = await pool.query(
-      'INSERT INTO renda (descricao, valor, tipo_renda, periodicidade, datas, id_usuario) VALUES (?, ?, ?, ?, ?, ?)',
-      [dados.descricao, dados.valor, dados.tipo_renda, dados.periodicidade, dados.datas, dados.id_usuario]
-    );
-    return buscarPorId(result.insertId);
-  }
+  validarLancamento(dados, true);
+  const [result] = await pool.query(
+    'INSERT INTO renda (descricao, valor, tipo_renda, periodicidade, datas, id_usuario) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      dados.descricao,
+      dados.valor,
+      dados.tipo_renda,
+      dados.periodicidade,
+      dados.datas,
+      dados.id_usuario,
+    ],
+  );
+  return buscarPorId(result.insertId);
 }
 
 async function atualizar(id, dados) {
+  validarLancamento(dados, false);
   const campos = [];
   const valores = [];
 
@@ -59,7 +76,7 @@ async function atualizar(id, dados) {
   valores.push(id);
   const [result] = await pool.query(
     `UPDATE renda SET ${campos.join(', ')} WHERE id_renda = ?`,
-    valores
+    valores,
   );
   return result.affectedRows ? buscarPorId(id) : null;
 }
@@ -74,5 +91,5 @@ module.exports = {
   buscarPorId,
   cadastrar,
   atualizar,
-  deletar
+  deletar,
 };

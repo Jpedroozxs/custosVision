@@ -5,4 +5,4 @@ class Categoria {
   }
 }
 
-module.exports = {Categoria};
+module.exports = { Categoria };
