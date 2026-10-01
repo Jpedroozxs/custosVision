@@ -1,63 +1,79 @@
-const { Datas } = require("../valueObjects/Datas");
+const { Datas } = require('../valueObjects/Datas');
 
+class Despesa {
+  #id;
+  #descricao;
 
-class Despesa{
-    #id;
-    #descricao;
+  constructor(id, descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
+    this.#id = id;
+    this.#descricao = descricao;
+    this.tipoDespesa = tipoDespesa;
+    this.periodicidade = periodicidade;
+    this.datas = datas;
+    this.valor = valor;
+    this.idUsuario = idUsuario;
+    this.idCategoria = idCategoria;
+  }
 
-    
-    constructor(id, descricao, tipoDespesa, periodicidade, datas, valor, idUsuario, idCategoria) {
-        this.#id = id;
-        this.#descricao = descricao;
-        this.tipoDespesa = tipoDespesa;
-        this.periodicidade = periodicidade;
-        this.datas = new Datas(datas);
-        this.valor = valor;
-        this.idUsuario = idUsuario;
-        this.idCategoria = idCategoria;
-    }
+  get id() {
+    return this.#id;
+  }
 
-    get id() {
-        return this.#id;
-    }
+  get descricao() {
+    return this.#descricao;
+  }
 
-   
-    get descricao() {
-        return this.#descricao;
-    }
+  set descricao(value) {
+    this.#descricao = value;
+  }
 
-    set descricao(value) {
-        this.#descricao = value;
-    }
+  get tipoDespesa() {
+    return this._tipoDespesa;
+  }
 
-    set tipoDespesa(value) {
-        this.tipoDespesa = value;
-    }
+  set tipoDespesa(value) {
+    this._tipoDespesa = value;
+  }
 
-    set periodicidade(value) {
-        this.periodicidade = value;
-    }
+  get periodicidade() {
+    return this._periodicidade;
+  }
 
-    set datas(value) {
-        this.datas = new Datas(value);
-    }
+  set periodicidade(value) {
+    this._periodicidade = value;
+  }
 
-    set valor(value) {
-        this.valor = value;
-    }
+  get datas() {
+    return this._datas;
+  }
 
-    set idUsuario(value) {
-        this.idUsuario = value;
-    }
+  set datas(value) {
+    this._datas = new Datas(value);
+  }
 
-    set idCategoria(value) {
-        this.idCategoria = value;
-    }
+  get valor() {
+    return this._valor;
+  }
 
+  set valor(value) {
+    this._valor = value;
+  }
 
+  get idUsuario() {
+    return this._idUsuario;
+  }
+
+  set idUsuario(value) {
+    this._idUsuario = value;
+  }
+
+  get idCategoria() {
+    return this._idCategoria;
+  }
+
+  set idCategoria(value) {
+    this._idCategoria = value;
+  }
 }
 
-
-module.exports = {Despesa};
-
-
+module.exports = { Despesa };

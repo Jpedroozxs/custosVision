@@ -11,7 +11,8 @@ CREATE TABLE usuario(
 
 CREATE TABLE categoria(
 	id_categoria INTEGER PRIMARY KEY AUTO_INCREMENT UNIQUE,
-	nome VARCHAR(70) NOT NULL UNIQUE,
+	nome VARCHAR(70) NOT NULL,
+	CONSTRAINT uq_categoria_usuario_nome UNIQUE (id_usuario, nome),
 	id_usuario INTEGER NOT NULL,
 	FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
 );
@@ -42,7 +43,8 @@ CREATE TABLE despesa(
 
 CREATE TABLE meta(
 	id_meta INTEGER PRIMARY KEY AUTO_INCREMENT UNIQUE,
-	nome VARCHAR(150) NOT NULL UNIQUE,
+	nome VARCHAR(150) NOT NULL,
+	CONSTRAINT uq_meta_usuario_nome UNIQUE (id_usuario, nome),
 	valor_objetivo DECIMAL(10,2) NOT NULL CHECK(valor_objetivo > 0),
 	prazo DATE NOT NULL,
 	status VARCHAR(50) NOT NULL,

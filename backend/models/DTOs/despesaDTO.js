@@ -9,7 +9,12 @@ class CriarDespesaDTO {
     this.id_categoria = dados.id_categoria ?? dados.idCategoria ?? null;
   }
 }
-class UpdateDespesaDTO extends CriarDespesaDTO {}
+class UpdateDespesaDTO extends CriarDespesaDTO {
+  constructor(dados = {}) {
+    super(dados);
+    this.id_categoria = dados.id_categoria !== undefined ? dados.id_categoria : dados.idCategoria;
+  }
+}
 class ResponseDespesaDTO {
   constructor(dados = {}) {
     this.id_despesa = dados.id_despesa;
