@@ -255,6 +255,81 @@ function buildBalanceTimeline(transactions, limit = 12) {
   ]
 }
 
+
+function niceAxisStep(maxAbs, targetSteps = 4) {
+  const safeMax = Math.max(Math.abs(Number(maxAbs) || 0), 1)
+  const rawStep = safeMax / targetSteps
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
+  const normalized = rawStep / magnitude
+  const nice = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
+  return nice * magnitude
+}
+
+function buildSymmetricScale(values, targetSteps = 4) {
+  const maxAbs = Math.max(...values.map(value => Math.abs(Number(value) || 0)), 1)
+  const step = niceAxisStep(maxAbs, targetSteps)
+  const limit = Math.max(step, Math.ceil(maxAbs / step) * step)
+  const ticks = []
+  for (let value = limit; value >= -limit; value -= step) ticks.push(Math.abs(value) < step / 1000 ? 0 : value)
+  return { min: -limit, max: limit, range: limit * 2, step, ticks }
+}
+
+function formatAxisTick(value) {
+  const rounded = Math.round(Number(value) || 0)
+  const formatted = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(Math.abs(rounded))
+  if (rounded > 0) return `+${formatted}`
+  if (rounded < 0) return `−${formatted}`
+  return '0'
+}
+
+function groupTransactionsByDescription(items) {
+  const grouped = new Map()
+  items.forEach(item => {
+    const label = String(item.description || 'Sem descrição').trim() || 'Sem descrição'
+    const key = label.toLocaleLowerCase('pt-BR')
+    const current = grouped.get(key) || { label, value: 0, count: 0 }
+    current.value = fromCents(toCents(current.value) + toCents(item.value))
+    current.count += 1
+    grouped.set(key, current)
+  })
+  return [...grouped.values()].sort((a, b) => b.value - a.value)
+}
+
+function getMonthlyIncomeSummary(transactions) {
+  const incomes = transactions.filter(item => item.type === 'income')
+  const monthKeys = [...new Set(incomes.map(item => String(item.date || '').slice(0, 7)).filter(Boolean))]
+  const divisor = Math.max(monthKeys.length, 1)
+  const principalTotal = sumMoney(incomes.filter(item => item.category === 'Renda principal'))
+  const extraTotal = sumMoney(incomes.filter(item => item.category === 'Renda extra'))
+  return {
+    months: monthKeys.length,
+    principalAverage: fromCents(Math.round(toCents(principalTotal) / divisor)),
+    extraAverage: fromCents(Math.round(toCents(extraTotal) / divisor)),
+    totalAverage: fromCents(Math.round(toCents(principalTotal + extraTotal) / divisor)),
+  }
+}
+
+function getGoalMonthlyPlan(goal, incomeSummary) {
+  const target = Number(goal?.target) || 0
+  const saved = Number(goal?.saved) || 0
+  const remaining = Math.max(0, target - saved)
+  const deadline = parseDate(goal?.deadline)
+  if (!deadline || target <= 0) return null
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  deadline.setHours(0, 0, 0, 0)
+  const days = Math.ceil((deadline - today) / 86400000)
+  const months = days < 0 ? 0 : Math.max(1, Math.ceil(Math.max(days, 1) / 30.4375))
+  // A reserva mensal representa o planejamento original da meta:
+  // valor total do objetivo dividido pelo prazo restante. Os aportes alteram
+  // apenas o acumulado/progresso e não diminuem a parcela mensal planejada.
+  const monthly = months > 0 ? fromCents(Math.ceil(toCents(target) / months)) : target
+  const incomeAverage = Number(incomeSummary?.totalAverage) || 0
+  const incomeShare = incomeAverage > 0 ? (monthly / incomeAverage) * 100 : null
+  return { remaining, months, monthly, incomeAverage, incomeShare }
+}
+
 function passwordStrength(password) {
   let score = 0
   if (password.length >= 6) score += 1
@@ -350,7 +425,7 @@ function App() {
 
   useEffect(() => {
     if (!toast) return undefined
-    const timer = setTimeout(() => setToast(null), toast.tone === 'warning' ? 4200 : 2800)
+    const timer = setTimeout(() => setToast(null), toast.tone === 'warning' || toast.tone === 'error' ? 5200 : 3800)
     return () => clearTimeout(timer)
   }, [toast])
 
@@ -567,8 +642,8 @@ function App() {
 
   const addCategory = name => {
     const cleanName = name.trim()
-    if (!cleanName) return { ok: false, error: 'Informe um nome para a categoria.' }
-    if (categories.some(category => category.toLowerCase() === cleanName.toLowerCase())) return { ok: false, error: 'Essa categoria já existe.' }
+    if (!cleanName) { notify('Informe um nome para a categoria.', 'warning'); return { ok: false, error: 'Informe um nome para a categoria.' } }
+    if (categories.some(category => category.toLowerCase() === cleanName.toLowerCase())) { notify('Essa categoria já existe.', 'warning'); return { ok: false, error: 'Essa categoria já existe.' } }
     persist('categories', [...categories, cleanName], setCategories)
     setModal(null)
     notify('Categoria criada.')
@@ -630,6 +705,7 @@ function App() {
       return { ok: true }
     } catch (error) {
       const errorMessage = error.status === 401 ? 'A senha atual está incorreta.' : (error.message || 'Não foi possível alterar a senha.')
+      notify(errorMessage, 'error')
       return { ok: false, error: errorMessage }
     }
   }
@@ -679,7 +755,7 @@ function App() {
 
         {page === 'dashboard' && <Dashboard totals={totals} transactions={transactions} goals={goals} categories={categories} profile={profile} setPage={setPage} setModal={setModal} />}
         {page === 'transactions' && <Transactions transactions={transactions} categories={categories} setModal={setModal} />}
-        {page === 'goals' && <Goals goals={goals} setModal={setModal} />}
+        {page === 'goals' && <Goals goals={goals} transactions={transactions} setModal={setModal} />}
         {page === 'categories' && <Categories categories={categories} transactions={transactions} setModal={setModal} />}
         {page === 'profile' && <Profile profile={profile} onSave={saveProfile} onChangePassword={() => setModal({ type: 'password' })} onExport={exportBackup} onReset={() => setModal({ type: 'reset' })} onLogout={() => setModal({ type: 'logout' })} />}
       </main>
@@ -687,7 +763,7 @@ function App() {
       <MobileNav page={page} setPage={setPage} overdueCount={overdueGoals.length} />
 
       {modal?.type === 'transaction' && <TransactionModal categories={categories} initialType={modal.transactionType} transaction={modal.transaction} onClose={() => setModal(null)} onSubmit={modal.transaction ? updateTransaction : addTransaction} />}
-      {modal?.type === 'goal' && <GoalModal goal={modal.goal} onClose={() => setModal(null)} onSubmit={modal.goal ? updateGoal : addGoal} />}
+      {modal?.type === 'goal' && <GoalModal goal={modal.goal} transactions={transactions} onClose={() => setModal(null)} onSubmit={modal.goal ? updateGoal : addGoal} />}
       {modal?.type === 'contribution' && <ContributionModal goal={modal.goal} onClose={() => setModal(null)} onSubmit={addContribution} />}
       {modal?.type === 'category' && <CategoryModal onClose={() => setModal(null)} onSubmit={addCategory} />}
       {modal?.type === 'password' && <PasswordModal onClose={() => setModal(null)} onSubmit={changePassword} />}
@@ -713,6 +789,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [registeredAccount, setRegisteredAccount] = useState(null)
+  const [feedback, setFeedback] = useState(null)
   const strength = passwordStrength(password)
 
   const changeMode = nextMode => {
@@ -722,20 +799,31 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
     setConfirmPassword('')
     setShowPassword(false)
     setRegisteredAccount(null)
+    setFeedback(null)
   }
 
   const submit = async event => {
     event.preventDefault()
     setError('')
-    if (mode === 'register' && password !== confirmPassword) return setError('As senhas não coincidem.')
+    if (mode === 'register' && password !== confirmPassword) {
+      const message = 'As senhas não coincidem.'
+      setError(message)
+      setFeedback({ id: Date.now(), message, tone: 'error' })
+      return
+    }
     setLoading(true)
     const result = mode === 'login' ? await onLogin({ email, password }) : await onRegister({ name, cpf, email, password })
     setLoading(false)
     if (!result?.ok) {
-      setError(result?.error || 'Não foi possível continuar.')
+      const message = result?.error || 'Não foi possível continuar.'
+      setError(message)
+      setFeedback({ id: Date.now(), message, tone: 'error' })
       return
     }
-    if (mode === 'register' && result.account) setRegisteredAccount(result.account)
+    if (mode === 'register' && result.account) {
+      setRegisteredAccount(result.account)
+      setFeedback({ id: Date.now(), message: 'Sua conta foi criada com sucesso e já está pronta para uso.', tone: 'success' })
+    }
   }
 
   if (registeredAccount) {
@@ -779,6 +867,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
             </div>
           </div>
         </section>
+        {feedback && <Toast toast={feedback} onClose={() => setFeedback(null)} />}
       </main>
     )
   }
@@ -840,6 +929,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
           </div>
         </div>
       </section>
+      {feedback && <Toast toast={feedback} onClose={() => setFeedback(null)} />}
     </main>
   )
 }
@@ -917,13 +1007,13 @@ function Dashboard({ totals, transactions, goals, categories, profile, setPage, 
     </section>
 
     <section className="panel chart-panel realtime-balance-panel">
-      <PanelHeader title="Saldo em tempo real" subtitle="Cada renda faz a linha subir; cada despesa faz a linha cair" />
+      <PanelHeader title="Saldo em tempo real" subtitle="Colunas mostram entradas e saídas; a linha acompanha o saldo acumulado" />
       {transactions.length ? <RunningBalanceChart data={balanceTimeline} /> : <MiniEmpty text="Adicione uma renda ou despesa para começar a formar sua curva de saldo." />}
     </section>
 
     <section className="dashboard-grid dashboard-grid-charts">
       <div className="panel chart-panel chart-panel-large">
-        <PanelHeader title="Fluxo financeiro" subtitle="Receitas e despesas dos últimos 6 meses" />
+        <PanelHeader title="Fluxo financeiro" subtitle="Receitas acima de zero, despesas abaixo e saldo mensal em linha" />
         {transactions.length ? <CashFlowChart data={monthlySeries} /> : <MiniEmpty text="Adicione lançamentos para acompanhar a evolução mensal em gráfico." />}
       </div>
       <div className="panel chart-panel">
@@ -977,27 +1067,21 @@ function PanelHeader({ title, subtitle, action, onAction }) {
 
 function RunningBalanceChart({ data }) {
   const width = 760
-  const height = 270
-  const padding = { top: 22, right: 24, bottom: 42, left: 58 }
+  const height = 310
+  const padding = { top: 24, right: 24, bottom: 44, left: 68 }
   const chartWidth = width - padding.left - padding.right
   const chartHeight = height - padding.top - padding.bottom
-  const balances = data.map(item => Number(item.balance) || 0)
-  const rawMin = Math.min(0, ...balances)
-  const rawMax = Math.max(0, ...balances)
-  const spread = Math.max(rawMax - rawMin, 1)
-  const margin = Math.max(spread * .12, 1)
-  const minValue = rawMin - margin
-  const maxValue = rawMax + margin
-  const range = Math.max(maxValue - minValue, 1)
+  const signedMovements = data.map(item => item.type === 'income' ? Number(item.value) || 0 : item.type === 'expense' ? -(Number(item.value) || 0) : 0)
+  const scale = buildSymmetricScale([...data.map(item => item.balance), ...signedMovements], 4)
   const stepX = data.length > 1 ? chartWidth / (data.length - 1) : 0
   const xForIndex = index => padding.left + index * stepX
-  const yForValue = value => padding.top + ((maxValue - value) / range) * chartHeight
+  const yForValue = value => padding.top + ((scale.max - value) / scale.range) * chartHeight
   const zeroY = yForValue(0)
   const current = data[data.length - 1]
   const previous = data.length > 1 ? data[data.length - 2] : current
   const lastDelta = fromCents(toCents(current?.balance || 0) - toCents(previous?.balance || 0))
-  const signature = data.map(item => `${item.id}-${item.balance}`).join('|')
-  const gridValues = [0, .25, .5, .75, 1].map(step => minValue + range * step)
+  const barWidth = Math.max(10, Math.min(26, chartWidth / Math.max(data.length * 2.4, 1)))
+  const linePath = data.map((item, index) => `${index === 0 ? 'M' : 'L'} ${xForIndex(index)} ${yForValue(item.balance)}`).join(' ')
 
   return <div className="running-balance-shell">
     <div className="running-balance-head">
@@ -1005,67 +1089,74 @@ function RunningBalanceChart({ data }) {
       {current?.type !== 'start' && <div className={`last-movement ${current?.type === 'income' ? 'income' : 'expense'}`}><span>{current?.type === 'income' ? '↗ Última renda' : '↘ Última despesa'}</span><strong>{current?.type === 'income' ? '+' : '−'} {money.format(Math.abs(current?.value || lastDelta))}</strong><small>{current?.description}</small></div>}
     </div>
     <div className="running-chart-scroll">
-      <svg viewBox={`0 0 ${width} ${height}`} className="running-balance-chart" role="img" aria-label="Evolução do saldo acumulado a cada lançamento">
-        <defs>
-          <linearGradient id={`balanceArea-${signature.length}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--purple)" stopOpacity=".16" /><stop offset="100%" stopColor="var(--purple)" stopOpacity="0" /></linearGradient>
-        </defs>
-        {gridValues.map((value, index) => {
+      <svg viewBox={`0 0 ${width} ${height}`} className="running-balance-chart" role="img" aria-label="Gráfico combinado com movimentações em colunas e saldo acumulado em linha">
+        {scale.ticks.map(value => {
           const y = yForValue(value)
-          return <g key={`grid-${index}`}><line x1={padding.left} y1={y} x2={width - padding.right} y2={y} className="chart-grid-line" /><text x={padding.left - 8} y={y + 3} textAnchor="end" className="running-grid-label">{money.format(value)}</text></g>
+          return <g key={`grid-${value}`}><line x1={padding.left} y1={y} x2={width - padding.right} y2={y} className="chart-grid-line" /><text x={padding.left - 10} y={y + 3} textAnchor="end" className="running-grid-label">{formatAxisTick(value)}</text></g>
         })}
-        {zeroY >= padding.top && zeroY <= height - padding.bottom && <line x1={padding.left} y1={zeroY} x2={width - padding.right} y2={zeroY} className="balance-zero-line" />}
-        {data.slice(1).map((item, index) => {
-          const prev = data[index]
-          const x1 = xForIndex(index)
-          const y1 = yForValue(prev.balance)
-          const x2 = xForIndex(index + 1)
-          const y2 = yForValue(item.balance)
-          return <line key={`${signature}-segment-${item.id}`} x1={x1} y1={y1} x2={x2} y2={y2} className={`balance-segment ${item.type}`} />
+        <line x1={padding.left} y1={zeroY} x2={width - padding.right} y2={zeroY} className="balance-zero-line" />
+        {data.map((item, index) => {
+          if (item.type === 'start') return null
+          const signed = item.type === 'income' ? Number(item.value) || 0 : -(Number(item.value) || 0)
+          const x = xForIndex(index)
+          const valueY = yForValue(signed)
+          const y = Math.min(valueY, zeroY)
+          const barHeight = Math.max(2, Math.abs(zeroY - valueY))
+          return <rect key={`movement-${item.id}`} x={x - barWidth / 2} y={y} width={barWidth} height={barHeight} rx="5" className={`balance-movement-bar ${item.type}`}><title>{`${item.description}: ${item.type === 'income' ? '+' : '−'} ${money.format(item.value)}`}</title></rect>
         })}
+        <path d={linePath} className="balance-line-path" />
         {data.map((item, index) => {
           const x = xForIndex(index)
           const y = yForValue(item.balance)
           const date = parseDate(item.date)
           const label = index === 0 ? 'Início' : date ? date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'
-          return <g key={`${signature}-point-${item.id}`}>
-            <circle cx={x} cy={y} r={index === data.length - 1 ? 6 : 4} className={`balance-point ${item.type}`}><title>{index === 0 ? `Saldo inicial exibido: ${money.format(item.balance)}` : `${item.description}: ${item.type === 'income' ? '+' : '−'} ${money.format(item.value)} · Saldo ${money.format(item.balance)}`}</title></circle>
+          return <g key={`point-${item.id}`}>
+            <circle cx={x} cy={y} r={index === data.length - 1 ? 5.5 : 3.8} className={`balance-point ${index === data.length - 1 ? 'current' : 'start'}`}><title>{index === 0 ? `Saldo inicial exibido: ${money.format(item.balance)}` : `Saldo após ${item.description}: ${money.format(item.balance)}`}</title></circle>
             {(data.length <= 9 || index === 0 || index === data.length - 1 || index % 2 === 0) && <text x={x} y={height - 14} textAnchor="middle" className="chart-axis-label">{label}</text>}
           </g>
         })}
       </svg>
     </div>
-    <div className="movement-legend"><span><i className="income" />Renda: saldo sobe</span><span><i className="expense" />Despesa: saldo cai</span><span><i className="current" />Ponto atual</span></div>
+    <div className="movement-legend"><span><i className="income" />Coluna de renda (+)</span><span><i className="expense" />Coluna de despesa (−)</span><span><i className="current" />Linha do saldo acumulado</span></div>
   </div>
 }
 
 function CashFlowChart({ data }) {
-  const width = 560
-  const height = 240
-  const paddingX = 28
-  const paddingY = 22
-  const chartWidth = width - paddingX * 2
-  const chartHeight = height - paddingY * 2
-  const maxValue = Math.max(...data.flatMap(item => [item.income, item.expense, 0]), 1)
-  const stepX = data.length > 1 ? chartWidth / (data.length - 1) : 0
-  const yForValue = value => height - paddingY - (value / maxValue) * chartHeight
-  const buildPath = key => data.map((item, index) => `${index === 0 ? 'M' : 'L'} ${paddingX + index * stepX} ${yForValue(item[key])}`).join(' ')
-  const incomePath = buildPath('income')
-  const expensePath = buildPath('expense')
-  const gridValues = [0, .25, .5, .75, 1].map(step => maxValue * step)
+  const width = 590
+  const height = 300
+  const padding = { top: 24, right: 24, bottom: 38, left: 62 }
+  const chartWidth = width - padding.left - padding.right
+  const chartHeight = height - padding.top - padding.bottom
+  const scale = buildSymmetricScale(data.flatMap(item => [item.income, -item.expense, item.balance]), 4)
+  const stepX = chartWidth / Math.max(data.length, 1)
+  const yForValue = value => padding.top + ((scale.max - value) / scale.range) * chartHeight
+  const zeroY = yForValue(0)
+  const barWidth = Math.min(25, stepX * .26)
+  const xForIndex = index => padding.left + stepX * (index + .5)
+  const balancePath = data.map((item, index) => `${index === 0 ? 'M' : 'L'} ${xForIndex(index)} ${yForValue(item.balance)}`).join(' ')
 
   return <div className="chart-shell">
-    <div className="chart-legend"><span><i className="income" />Receitas</span><span><i className="expense" />Despesas</span></div>
+    <div className="chart-legend"><span><i className="income" />Receitas (+)</span><span><i className="expense" />Despesas (−)</span><span><i className="balance" />Saldo mensal</span></div>
     <div className="chart-stage line-chart-stage">
-      <svg viewBox={`0 0 ${width} ${height}`} className="line-chart" role="img" aria-label="Gráfico de receitas e despesas por mês">
-        {gridValues.map((value, index) => {
+      <svg viewBox={`0 0 ${width} ${height}`} className="line-chart cashflow-combo-chart" role="img" aria-label="Gráfico mensal com receitas e despesas em colunas e saldo em linha">
+        {scale.ticks.map(value => {
           const y = yForValue(value)
-          return <g key={index}><line x1={paddingX} y1={y} x2={width - paddingX} y2={y} className="chart-grid-line" /><text x={2} y={y + 3} className="chart-grid-label">{money.format(value)}</text></g>
+          return <g key={value}><line x1={padding.left} y1={y} x2={width - padding.right} y2={y} className="chart-grid-line" /><text x={padding.left - 9} y={y + 3} textAnchor="end" className="chart-grid-label">{formatAxisTick(value)}</text></g>
         })}
-        <path d={incomePath} className="chart-line income" />
-        <path d={expensePath} className="chart-line expense" />
+        <line x1={padding.left} y1={zeroY} x2={width - padding.right} y2={zeroY} className="balance-zero-line" />
         {data.map((item, index) => {
-          const x = paddingX + index * stepX
-          return <g key={item.key}><circle cx={x} cy={yForValue(item.income)} r="4" className="chart-point income" /><circle cx={x} cy={yForValue(item.expense)} r="4" className="chart-point expense" /><text x={x} y={height - 4} textAnchor="middle" className="chart-axis-label">{item.label}</text></g>
+          const centerX = xForIndex(index)
+          const incomeY = yForValue(item.income)
+          const expenseY = yForValue(-item.expense)
+          return <g key={`bars-${item.key}`}>
+            <rect x={centerX - barWidth - 2} y={incomeY} width={barWidth} height={Math.max(1, zeroY - incomeY)} rx="5" className="cashflow-bar income"><title>{`Receitas em ${item.label}: ${money.format(item.income)}`}</title></rect>
+            <rect x={centerX + 2} y={zeroY} width={barWidth} height={Math.max(1, expenseY - zeroY)} rx="5" className="cashflow-bar expense"><title>{`Despesas em ${item.label}: ${money.format(item.expense)}`}</title></rect>
+          </g>
+        })}
+        <path d={balancePath} className="cashflow-balance-line" />
+        {data.map((item, index) => {
+          const x = xForIndex(index)
+          return <g key={`balance-${item.key}`}><circle cx={x} cy={yForValue(item.balance)} r="4" className="cashflow-balance-point"><title>{`Saldo em ${item.label}: ${money.format(item.balance)}`}</title></circle><text x={x} y={height - 9} textAnchor="middle" className="chart-axis-label">{item.label}</text></g>
         })}
       </svg>
     </div>
@@ -1236,13 +1327,13 @@ function TransactionTable({ items, compact = false, onEdit, onDelete }) {
   return <div className="table-wrap"><table><thead><tr><th>Descrição</th><th>Categoria</th><th>Data</th><th>Tipo</th><th className="right">Valor</th>{!compact && <th className="right">Ações</th>}</tr></thead><tbody>{items.map(item => <tr key={item.id}><td><div className="description-cell"><span className={`type-dot ${item.type}`}>{item.type === 'income' ? '↗' : '↘'}</span><strong>{item.description}</strong>{item.periodicity === 'Mensal' && <small className="recurring-label">Mensal</small>}</div></td><td>{item.category}</td><td>{parseDate(item.date) ? dateShortFmt.format(parseDate(item.date)) : '—'}</td><td><span className={`badge ${item.type}`}>{item.type === 'income' ? 'Renda' : 'Despesa'}</span></td><td className={`right value ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.value)}</td>{!compact && <td className="right"><div className="table-actions"><button className="icon-button" title="Editar" onClick={() => onEdit(item)}>✎</button><button className="icon-button danger" title="Excluir" onClick={() => onDelete(item)}>×</button></div></td>}</tr>)}</tbody></table></div>
 }
 
-function Goals({ goals, setModal }) {
+function Goals({ goals, transactions, setModal }) {
   const overdue = goals.filter(isGoalOverdue)
   const totalTarget = sumMoney(goals, goal => goal.target)
   const totalSaved = sumMoney(goals, goal => Math.min(Number(goal.saved) || 0, Number(goal.target) || 0))
   const completed = goals.filter(isGoalComplete).length
-  const averageProgress = goals.length ? Math.round(goals.reduce((sum, goal) => sum + goalProgress(goal), 0) / goals.length) : 0
   const active = goals.filter(goal => !isGoalComplete(goal) && !isGoalOverdue(goal)).length
+  const incomeSummary = useMemo(() => getMonthlyIncomeSummary(transactions), [transactions])
   const goalDistribution = [
     { label: 'Concluídas', value: completed },
     { label: 'Em andamento', value: active },
@@ -1250,8 +1341,8 @@ function Goals({ goals, setModal }) {
   ].filter(item => item.value > 0)
 
   return <div className="page">
-    <section className="section-heading"><div><span className="section-kicker">OBJETIVOS</span><h2>Metas financeiras</h2><p>Transforme planos em objetivos com valor, prazo e progresso visível.</p></div><button className="btn primary" onClick={() => setModal({ type: 'goal' })}>＋ Nova meta</button></section>
-    <section className="mini-metrics-grid goals-metrics"><MiniMetric label="Total planejado" value={money.format(totalTarget)} tone="purple" /><MiniMetric label="Já acumulado" value={money.format(totalSaved)} tone="green" /><MiniMetric label="Progresso médio" value={`${averageProgress}%`} tone="blue" /><MiniMetric label="Concluídas" value={`${completed}/${goals.length}`} tone="green" /></section>
+    <section className="section-heading"><div><span className="section-kicker">OBJETIVOS</span><h2>Metas financeiras</h2><p>Transforme planos em objetivos com valor, prazo e uma reserva mensal calculada pela sua renda.</p></div><button className="btn primary" onClick={() => setModal({ type: 'goal' })}>＋ Nova meta</button></section>
+    <section className="mini-metrics-grid goals-metrics"><MiniMetric label="Total planejado" value={money.format(totalTarget)} tone="purple" /><MiniMetric label="Já acumulado" value={money.format(totalSaved)} tone="green" /><MiniMetric label="Renda média mensal" value={money.format(incomeSummary.totalAverage)} tone="blue" /><MiniMetric label="Concluídas" value={`${completed}/${goals.length}`} tone="green" /></section>
     {overdue.length > 0 && <div className="goal-alert"><span>!</span><div><strong>Atenção aos prazos</strong><p>Você tem {overdue.length} meta{overdue.length > 1 ? 's' : ''} vencida{overdue.length > 1 ? 's' : ''} que ainda precisa{overdue.length > 1 ? 'm' : ''} ser concluída{overdue.length > 1 ? 's' : ''}.</p></div></div>}
 
     {!!goals.length && <section className="dashboard-grid dashboard-grid-charts page-charts-inline">
@@ -1265,14 +1356,15 @@ function Goals({ goals, setModal }) {
       </div>
     </section>}
 
-    {goals.length ? <div className="goals-grid">{goals.map(goal => <GoalCard key={goal.id} goal={goal} onContribution={() => setModal({ type: 'contribution', goal })} onEdit={() => setModal({ type: 'goal', goal })} onDelete={() => setModal({ type: 'delete-goal', goal })} />)}</div> : <section className="panel"><EmptyState title="Você ainda não criou metas" text="Crie seu primeiro objetivo financeiro e acompanhe cada avanço até chegar lá." action="Criar primeira meta" onAction={() => setModal({ type: 'goal' })} /></section>}
+    {goals.length ? <div className="goals-grid">{goals.map(goal => <GoalCard key={goal.id} goal={goal} incomeSummary={incomeSummary} onContribution={() => setModal({ type: 'contribution', goal })} onEdit={() => setModal({ type: 'goal', goal })} onDelete={() => setModal({ type: 'delete-goal', goal })} />)}</div> : <section className="panel"><EmptyState title="Você ainda não criou metas" text="Crie seu primeiro objetivo financeiro e acompanhe a reserva mensal necessária para chegar lá." action="Criar primeira meta" onAction={() => setModal({ type: 'goal' })} /></section>}
   </div>
 }
 
-function GoalCard({ goal, onContribution, onEdit, onDelete }) {
+function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
   const progress = goalProgress(goal)
   const status = goalStatus(goal)
   const days = daysUntil(goal.deadline)
+  const plan = getGoalMonthlyPlan(goal, incomeSummary)
 
   const saved = Number(goal.saved) || 0
   const target = Number(goal.target) || 0
@@ -1281,143 +1373,87 @@ function GoalCard({ goal, onContribution, onEdit, onDelete }) {
   let deadlineText = 'Sem prazo definido'
 
   if (goal.deadline) {
-    if (status === 'Concluída') {
-      deadlineText = 'Meta concluída'
-    } else if (days === 0) {
-      deadlineText = 'Vence hoje'
-    } else if (days < 0) {
+    if (status === 'Concluída') deadlineText = 'Meta concluída'
+    else if (days === 0) deadlineText = 'Vence hoje'
+    else if (days < 0) {
       const overdueDays = Math.abs(days)
       deadlineText = `Vencida há ${overdueDays} dia${overdueDays !== 1 ? 's' : ''}`
-    } else {
-      deadlineText = `${days} dia${days !== 1 ? 's' : ''} restante${days !== 1 ? 's' : ''}`
-    }
+    } else deadlineText = `${days} dia${days !== 1 ? 's' : ''} restante${days !== 1 ? 's' : ''}`
   }
 
   return (
-    <article className="goal-card">
-
+    <article className={`goal-card ${status === 'Concluída' ? 'goal-card-complete' : status === 'Vencida' ? 'goal-card-overdue' : 'goal-card-active'}`}>
       <div className="goal-card-header">
-        <div>
-          <span
-            className={`status-inline ${
-              status === 'Concluída'
-                ? 'done'
-                : status === 'Vencida'
-                  ? 'danger'
-                  : 'pending'
-            }`}
-          >
-            {status}
-          </span>
-
-          <h3>{goal.name}</h3>
-        </div>
-
-        <div className="goal-card-actions">
-          <button
-            className="icon-button"
-            title="Editar meta"
-            onClick={onEdit}
-          >
-            ✎
-          </button>
-
-          <button
-            className="icon-button danger"
-            title="Excluir meta"
-            onClick={onDelete}
-          >
-            ×
-          </button>
-        </div>
+        <div><span className={`status-inline ${status === 'Concluída' ? 'done' : status === 'Vencida' ? 'danger' : 'pending'}`}>{status}</span><h3>{goal.name}</h3></div>
+        <div className="goal-card-actions"><button className="icon-button" title="Editar meta" onClick={onEdit}>✎</button><button className="icon-button danger" title="Excluir meta" onClick={onDelete}>×</button></div>
       </div>
 
-      <div className="goal-values">
-        <div>
-          <span>Acumulado</span>
-          <strong>{money.format(saved)}</strong>
-        </div>
+      <div className="goal-values"><div><span>Acumulado</span><strong>{money.format(saved)}</strong></div><div><span>Objetivo</span><strong>{money.format(target)}</strong></div></div>
+      <div className="goal-progress-info"><span>Progresso</span><strong>{formatProgress(progress)}</strong></div>
+      <div className="goal-progress-bar"><i style={{ width: `${progress}%` }} /></div>
+      <div className="goal-card-details"><div><span>Falta</span><strong>{money.format(remaining)}</strong></div><div><span>Prazo</span><strong>{goal.deadline && parseDate(goal.deadline) ? dateLongFmt.format(parseDate(goal.deadline)) : '—'}</strong></div></div>
 
-        <div>
-          <span>Objetivo</span>
-          <strong>{money.format(target)}</strong>
-        </div>
-      </div>
+      {status !== 'Concluída' && plan && <div className="goal-monthly-plan"><div><span>Reserva mensal sugerida</span><strong>{money.format(plan.monthly)}/mês</strong></div><small>{plan.months > 0 ? `${plan.months} mês${plan.months !== 1 ? 'es' : ''} até o prazo` : 'Prazo já vencido'}{plan.incomeShare != null ? ` · ${percentFmt.format(plan.incomeShare)}% da renda média` : ' · cadastre sua renda para comparar'}</small></div>}
 
-      <div className="goal-progress-info">
-        <span>Progresso</span>
-        <strong>{formatProgress(progress)}</strong>
-      </div>
-
-      <div className="goal-progress-bar">
-        <i style={{ width: `${progress}%` }} />
-      </div>
-
-      <div className="goal-card-details">
-        <div>
-          <span>Falta</span>
-          <strong>{money.format(remaining)}</strong>
-        </div>
-
-        <div>
-          <span>Prazo</span>
-          <strong>
-            {goal.deadline && parseDate(goal.deadline)
-              ? dateLongFmt.format(parseDate(goal.deadline))
-              : '—'}
-          </strong>
-        </div>
-      </div>
-
-      <div className="goal-deadline">
-        <span>◷</span>
-        <span>{deadlineText}</span>
-      </div>
-
-      {status !== 'Concluída' && (
-        <button
-          className="btn primary goal-contribution-button"
-          onClick={onContribution}
-        >
-          ＋ Adicionar aporte
-        </button>
-      )}
-
+      <div className="goal-deadline"><span>◷</span><span>{deadlineText}</span></div>
+      {status !== 'Concluída' && <button className="btn primary goal-contribution-button" onClick={onContribution}>＋ Adicionar aporte</button>}
     </article>
   )
 }
 
 function Categories({ categories, transactions, setModal }) {
-  const expenseTransactions = transactions.filter(item => item.type === 'expense')
-  const totalExpenses = sumMoney(expenseTransactions)
-  const data = categories.map((category, index) => {
-    const items = expenseTransactions.filter(item => item.category === category)
+  const [viewType, setViewType] = useState('expense')
+  const [selectedCategory, setSelectedCategory] = useState(null)
+  const typeLabel = viewType === 'expense' ? 'despesas' : 'rendas'
+  const typedTransactions = transactions.filter(item => item.type === viewType)
+  const availableCategories = viewType === 'expense' ? categories : [...new Set(['Renda principal', 'Renda extra', ...typedTransactions.map(item => item.category).filter(Boolean)])]
+  const totalAmount = sumMoney(typedTransactions)
+  const data = availableCategories.map((category, index) => {
+    const items = typedTransactions.filter(item => item.category === category)
     const total = sumMoney(items)
     return { category, total, count: items.length, index }
   }).sort((a, b) => b.total - a.total)
-  const chartData = data.filter(item => item.total > 0).slice(0, 5).map(item => ({ label: item.category, value: item.total }))
+
+  const overviewChartData = data.filter(item => item.total > 0).slice(0, 5).map(item => ({ label: item.category, value: item.total }))
+  const selectedItems = selectedCategory ? typedTransactions.filter(item => item.category === selectedCategory) : []
+  const selectedBreakdown = groupTransactionsByDescription(selectedItems)
+  const chartData = selectedCategory ? selectedBreakdown.slice(0, 8) : overviewChartData
+  const chartTitle = selectedCategory ? `${selectedCategory}: detalhamento` : viewType === 'expense' ? 'Categorias que mais pesam' : 'Fontes de renda'
+  const chartSubtitle = selectedCategory
+    ? `${viewType === 'expense' ? 'Gastos' : 'Entradas'} agrupados por descrição dentro desta categoria`
+    : viewType === 'expense' ? 'Participação das principais despesas' : 'Participação das suas fontes de renda'
+
+  const changeType = nextType => {
+    setViewType(nextType)
+    setSelectedCategory(null)
+  }
 
   return <div className="page">
-    <section className="section-heading"><div><span className="section-kicker">ORGANIZAÇÃO</span><h2>Categorias</h2><p>Entenda quais áreas concentram mais despesas e mantenha seus registros consistentes.</p></div><button className="btn primary" onClick={() => setModal({ type: 'category' })}>＋ Nova categoria</button></section>
-    <section className="category-overview panel"><div><span>Total em despesas</span><strong>{money.format(totalExpenses)}</strong></div><div><span>Categorias ativas</span><strong>{data.filter(item => item.count > 0).length}</strong></div><div><span>Categorias cadastradas</span><strong>{categories.length}</strong></div></section>
+    <section className="section-heading"><div><span className="section-kicker">ORGANIZAÇÃO</span><h2>Categorias</h2><p>Veja o peso de cada categoria e clique em uma delas para abrir os gastos ou rendas que existem dentro dela.</p></div><div className="heading-actions"><div className="category-view-switch" aria-label="Alternar entre despesas e rendas"><button className={viewType === 'expense' ? 'active' : ''} onClick={() => changeType('expense')}>Despesas</button><button className={viewType === 'income' ? 'active' : ''} onClick={() => changeType('income')}>Rendas</button></div>{viewType === 'expense' && <button className="btn primary" onClick={() => setModal({ type: 'category' })}>＋ Nova categoria</button>}</div></section>
+    <section className="category-overview panel"><div><span>Total em {typeLabel}</span><strong>{money.format(totalAmount)}</strong></div><div><span>Categorias ativas</span><strong>{data.filter(item => item.count > 0).length}</strong></div><div><span>{selectedCategory ? 'Categoria selecionada' : 'Categorias disponíveis'}</span><strong className="category-overview-text">{selectedCategory || availableCategories.length}</strong></div></section>
 
     <section className="dashboard-grid dashboard-grid-charts page-charts-inline">
       <div className="panel chart-panel chart-panel-large">
-        <PanelHeader title="Categorias que mais pesam" subtitle="Participação das principais despesas" />
-        {chartData.length ? <DonutChart data={chartData} totalLabel="Despesas" totalFormatter={value => money.format(value)} valueFormatter={value => money.format(value)} /> : <MiniEmpty text="Registre despesas para ver a participação de cada categoria." />}
+        <PanelHeader title={chartTitle} subtitle={chartSubtitle} action={selectedCategory ? 'Voltar às categorias' : null} onAction={() => setSelectedCategory(null)} />
+        {chartData.length ? <DonutChart data={chartData} totalLabel={selectedCategory ? selectedCategory : viewType === 'expense' ? 'Despesas' : 'Rendas'} totalFormatter={value => money.format(value)} valueFormatter={value => money.format(value)} /> : <MiniEmpty text={selectedCategory ? `Ainda não há ${typeLabel} registradas nesta categoria.` : `Registre ${typeLabel} para visualizar a participação por categoria.`} />}
       </div>
       <div className="panel insight-panel">
-        <PanelHeader title="Leitura rápida" subtitle="Resumo proporcional das categorias" />
-        {data.some(item => item.total > 0) ? <div className="category-bars">{data.filter(item => item.total > 0).slice(0, 5).map(({ category, total }) => {
-          const share = totalExpenses > 0 ? (total / totalExpenses) * 100 : 0
-          return <div className="category-bar-row" key={category}><div><strong>{category}</strong><span>{money.format(total)}</span></div><div className="category-track"><i style={{ width: `${share}%` }} /></div></div>
-        })}</div> : <MiniEmpty text="As categorias passam a ganhar comparação visual assim que houver despesas." />}
+        <PanelHeader title={selectedCategory ? 'Itens dentro da categoria' : 'Leitura rápida'} subtitle={selectedCategory ? 'Cada descrição vira um detalhamento do seu histórico' : `Resumo proporcional das ${typeLabel}`} />
+        {(selectedCategory ? selectedBreakdown.length : data.some(item => item.total > 0)) ? <div className="category-bars">{(selectedCategory ? selectedBreakdown : data.filter(item => item.total > 0).slice(0, 5)).slice(0, 6).map(item => {
+          const label = selectedCategory ? item.label : item.category
+          const total = item.value ?? item.total
+          const base = selectedCategory ? sumMoney(selectedBreakdown, detail => detail.value) : totalAmount
+          const share = base > 0 ? (total / base) * 100 : 0
+          return <div className="category-bar-row" key={label}><div><strong>{label}</strong><span>{money.format(total)}</span></div><div className="category-track"><i style={{ width: `${share}%` }} /></div></div>
+        })}</div> : <MiniEmpty text={selectedCategory ? 'Os detalhes aparecem aqui conforme você registra lançamentos com descrições como Padaria, Mercado ou Restaurante.' : `As categorias passam a ganhar comparação visual assim que houver ${typeLabel}.`} />}
       </div>
     </section>
 
+    <p className="category-click-hint">Clique em uma categoria para detalhar os lançamentos por descrição/estabelecimento.</p>
     <div className="category-grid">{data.map(({ category, total, count, index }) => {
-      const share = totalExpenses > 0 ? Math.round((total / totalExpenses) * 100) : 0
-      return <article className="category-card" key={category}><span className={`category-symbol c${index % 5}`}>{['⌂','◉','▤','◆','＋'][index % 5]}</span><div className="category-card-main"><div className="category-title-row"><h3>{category}</h3><span>{share}%</span></div><p>{money.format(total)} · {count} lançamento{count !== 1 ? 's' : ''}</p><div className="category-progress"><i style={{ width: `${share}%` }} /></div></div><button className="icon-button subtle danger" title="Excluir categoria" onClick={() => setModal({ type: 'delete-category', category })}>×</button></article>
+      const share = totalAmount > 0 ? Math.round((total / totalAmount) * 100) : 0
+      const isSelected = selectedCategory === category
+      return <article className={`category-card category-card-clickable ${isSelected ? 'selected' : ''}`} key={category} role="button" tabIndex={0} onClick={() => setSelectedCategory(category)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedCategory(category) } }}><span className={`category-symbol c${index % 5}`}>{['⌂','◉','▤','◆','＋'][index % 5]}</span><div className="category-card-main"><div className="category-title-row"><h3>{category}</h3><span>{share}%</span></div><p>{money.format(total)} · {count} lançamento{count !== 1 ? 's' : ''}</p><div className="category-progress"><i style={{ width: `${share}%` }} /></div></div>{viewType === 'expense' && <button className="icon-button subtle danger" title="Excluir categoria" onClick={event => { event.stopPropagation(); setModal({ type: 'delete-category', category }) }}>×</button>}</article>
     })}</div>
   </div>
 }
@@ -1488,8 +1524,83 @@ function MoneyInput({ value, onChange, name, min = 0, max, required = false, ...
     }} />
 }
 
+function ReceiptScanner({ transactionType }) {
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [preview, setPreview] = useState('')
+  const [error, setError] = useState('')
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const fileRef = useRef(null)
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(track => track.stop())
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+  }
+
+  useEffect(() => {
+    if (!cameraOpen) return undefined
+    let active = true
+    const openCamera = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('camera-unavailable')
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+        if (!active) return stream.getTracks().forEach(track => track.stop())
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play().catch(() => {})
+        }
+      } catch {
+        if (active) {
+          setError('Não foi possível abrir a câmera ao vivo. Você pode escolher uma foto da nota fiscal.')
+          setCameraOpen(false)
+          setTimeout(() => fileRef.current?.click(), 0)
+        }
+      }
+    }
+    openCamera()
+    return () => { active = false; stopCamera() }
+  }, [cameraOpen])
+
+  const capture = () => {
+    const video = videoRef.current
+    if (!video?.videoWidth || !video?.videoHeight) return setError('Aguarde a imagem da câmera aparecer antes de capturar.')
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+    setPreview(canvas.toDataURL('image/jpeg', .86))
+    setError('')
+    setCameraOpen(false)
+    stopCamera()
+  }
+
+  const selectImage = event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => { setPreview(String(reader.result || '')); setError(''); setCameraOpen(false); stopCamera() }
+    reader.readAsDataURL(file)
+    event.target.value = ''
+  }
+
+  return <div className="receipt-scanner full-field">
+    <input ref={fileRef} className="receipt-file-input" type="file" accept="image/*" capture="environment" onChange={selectImage} />
+    <div className="receipt-scanner-intro"><div><span className="receipt-scanner-icon">▣</span><div><strong>Nota fiscal pela câmera</strong><small>Capture a nota para preparar o lançamento automático.</small></div></div><button type="button" className="receipt-camera-button" onClick={() => { setPreview(''); setError(''); setCameraOpen(true) }}>⌁ Abrir câmera</button></div>
+    {cameraOpen && <div className="receipt-camera-live"><video ref={videoRef} autoPlay muted playsInline /><div><button type="button" className="btn secondary" onClick={() => { setCameraOpen(false); stopCamera() }}>Cancelar</button><button type="button" className="btn primary" onClick={capture}>Capturar nota</button></div></div>}
+    {preview && <div className="receipt-preview"><img src={preview} alt="Prévia da nota fiscal capturada" /><div><strong>Nota capturada</strong><p>A imagem está pronta para a futura leitura automática de estabelecimento, valor e data. Nesta versão somente frontend, os campos continuam sob seu controle.</p><button type="button" onClick={() => setPreview('')}>Remover imagem</button></div></div>}
+    {error && <p className="receipt-camera-error">{error}</p>}
+    <small className="receipt-scanner-note">Disponível tanto para {transactionType === 'income' ? 'rendas' : 'despesas'}. A automação completa depende da integração de OCR/leitura fiscal em uma próxima etapa.</small>
+  </div>
+}
+
 function TransactionModal({ categories, initialType, transaction, onClose, onSubmit }) {
-  const [form, setForm] = useState(() => transaction ? { ...transaction, periodicity: transaction.periodicity || 'Única', value: Number(transaction.value).toFixed(2) } : { type: initialType || 'expense', description: '', category: categories[0] || 'Outros', date: todayInputValue(), value: '', periodicity: 'Única' })
+  const [form, setForm] = useState(() => {
+    if (transaction) return { ...transaction, periodicity: transaction.periodicity || 'Única', value: Number(transaction.value).toFixed(2) }
+    const type = initialType || 'expense'
+    return { type, description: '', category: type === 'income' ? 'Renda principal' : categories[0] || 'Outros', date: todayInputValue(), value: '', periodicity: 'Única' }
+  })
   const update = event => setForm(current => ({ ...current, [event.target.name]: event.target.value }))
   const submit = event => {
     event.preventDefault()
@@ -1497,11 +1608,13 @@ function TransactionModal({ categories, initialType, transaction, onClose, onSub
     if (transaction) onSubmit(transaction.id, form)
     else onSubmit(form)
   }
-  return <Modal title={transaction ? 'Editar lançamento' : 'Novo lançamento'} subtitle={transaction ? 'Atualize os dados desta movimentação.' : 'Registre uma movimentação financeira.'} onClose={onClose}><form onSubmit={submit} className="form-grid"><Field label="Tipo"><div className="segmented"><button type="button" className={form.type === 'expense' ? 'selected' : ''} onClick={() => setForm({ ...form, type: 'expense' })}>Despesa</button><button type="button" className={form.type === 'income' ? 'selected' : ''} onClick={() => setForm({ ...form, type: 'income' })}>Renda</button></div></Field><Field label="Descrição"><input autoFocus required name="description" value={form.description} onChange={update} placeholder="Ex.: Supermercado" /></Field><Field label="Valor"><MoneyInput required min="0.01" name="value" value={form.value} onChange={update} /></Field><Field label="Data"><input required name="date" type="date" value={form.date} onChange={update} /></Field><label className="field full-field"><span>Categoria</span><select name="category" value={form.category} onChange={update}>{form.type === 'income' && <><option>Renda principal</option><option>Renda extra</option></>}{categories.map(category => <option key={category}>{category}</option>)}</select></label>{<label className="field full-field"><span>Frequência</span><select name="periodicity" value={form.periodicity} onChange={update}><option value="Única">Somente esta vez</option><option value="Mensal">Mensal</option></select><small className="field-hint">Mensal indica que esta renda ou despesa se repete todo mês. Você ainda precisa cadastrar cada mês; o sistema não cria os próximos lançamentos sozinho.</small></label>}<div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{transaction ? 'Salvar alterações' : 'Salvar lançamento'}</button></div></form></Modal>
+  return <Modal title={transaction ? 'Editar lançamento' : 'Novo lançamento'} subtitle={transaction ? 'Atualize os dados desta movimentação.' : 'Registre uma movimentação financeira.'} onClose={onClose}><form onSubmit={submit} className="form-grid">{!transaction && <ReceiptScanner transactionType={form.type} />}<Field label="Tipo"><div className="segmented"><button type="button" className={form.type === 'expense' ? 'selected' : ''} onClick={() => setForm(current => ({ ...current, type: 'expense', category: categories.includes(current.category) ? current.category : categories[0] || 'Outros' }))}>Despesa</button><button type="button" className={form.type === 'income' ? 'selected' : ''} onClick={() => setForm(current => ({ ...current, type: 'income', category: ['Renda principal', 'Renda extra'].includes(current.category) ? current.category : 'Renda principal' }))}>Renda</button></div></Field><Field label="Descrição"><input autoFocus required name="description" value={form.description} onChange={update} placeholder="Ex.: Supermercado" /></Field><Field label="Valor"><MoneyInput required min="0.01" name="value" value={form.value} onChange={update} /></Field><Field label="Data"><input required name="date" type="date" value={form.date} onChange={update} /></Field><label className="field full-field"><span>Categoria</span><select name="category" value={form.category} onChange={update}>{form.type === 'income' ? <><option>Renda principal</option><option>Renda extra</option></> : categories.map(category => <option key={category}>{category}</option>)}</select></label>{<label className="field full-field"><span>Frequência</span><select name="periodicity" value={form.periodicity} onChange={update}><option value="Única">Somente esta vez</option><option value="Mensal">Mensal</option></select><small className="field-hint">Mensal indica que esta renda ou despesa se repete todo mês. Você ainda precisa cadastrar cada mês; o sistema não cria os próximos lançamentos sozinho.</small></label>}<div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{transaction ? 'Salvar alterações' : 'Salvar lançamento'}</button></div></form></Modal>
 }
 
-function GoalModal({ goal, onClose, onSubmit }) {
+function GoalModal({ goal, transactions, onClose, onSubmit }) {
   const [form, setForm] = useState(() => goal ? { name: goal.name, target: Number(goal.target).toFixed(2), saved: Number(goal.saved).toFixed(2), deadline: goal.deadline } : { name: '', target: '', saved: '', deadline: '' })
+  const incomeSummary = useMemo(() => getMonthlyIncomeSummary(transactions), [transactions])
+  const plan = useMemo(() => getGoalMonthlyPlan(form, incomeSummary), [form, incomeSummary])
   const update = event => setForm(current => ({ ...current, [event.target.name]: event.target.value }))
   const submit = event => {
     event.preventDefault()
@@ -1509,7 +1622,7 @@ function GoalModal({ goal, onClose, onSubmit }) {
     if (goal) onSubmit(goal.id, form)
     else onSubmit(form)
   }
-  return <Modal title={goal ? 'Editar meta' : 'Nova meta'} subtitle={goal ? 'Ajuste nome, valores ou prazo do objetivo.' : 'Defina um objetivo para manter o foco.'} onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Nome da meta</span><input autoFocus required name="name" value={form.name} onChange={update} placeholder="Ex.: Reserva de emergência" /></label><Field label="Valor objetivo"><MoneyInput required min="0.01" name="target" value={form.target} onChange={update} /></Field><Field label="Valor acumulado"><MoneyInput min="0" name="saved" value={form.saved} onChange={update} /></Field><label className="field full-field"><span>Prazo</span><input required type="date" name="deadline" value={form.deadline} onChange={update} /></label><div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{goal ? 'Salvar alterações' : 'Criar meta'}</button></div></form></Modal>
+  return <Modal title={goal ? 'Editar meta' : 'Nova meta'} subtitle={goal ? 'Ajuste nome, valores ou prazo do objetivo.' : 'Defina o objetivo e veja quanto reservar por mês até o prazo.'} onClose={onClose}><form onSubmit={submit} className="form-grid"><label className="field full-field"><span>Nome da meta</span><input autoFocus required name="name" value={form.name} onChange={update} placeholder="Ex.: Comprar um carro" /></label><Field label="Valor objetivo"><MoneyInput required min="0.01" name="target" value={form.target} onChange={update} /></Field><Field label="Valor acumulado"><MoneyInput min="0" name="saved" value={form.saved} onChange={update} /></Field><label className="field full-field"><span>Prazo</span><input required type="date" name="deadline" min={goal ? undefined : todayInputValue()} value={form.deadline} onChange={update} /></label>{plan && <div className="goal-plan-preview full-field"><div className="goal-plan-preview-head"><span>◎</span><div><strong>Plano mensal calculado</strong><p>Com base no valor total da meta, no prazo e na média da renda principal + renda extra.</p></div></div><div className="goal-plan-preview-grid"><div><span>Reservar por mês</span><strong>{money.format(plan.monthly)}</strong></div><div><span>Renda principal média</span><strong>{money.format(incomeSummary.principalAverage)}</strong></div><div><span>Renda extra média</span><strong>{money.format(incomeSummary.extraAverage)}</strong></div></div><p className="goal-plan-preview-note">{plan.months} mês{plan.months !== 1 ? 'es' : ''} para concluir{plan.incomeShare != null ? ` · a reserva equivale a ${percentFmt.format(plan.incomeShare)}% da renda média mensal.` : ' · cadastre renda principal e/ou extra para comparar o plano com sua renda.'}</p></div>}<div className="modal-actions full-field"><button type="button" className="btn secondary" onClick={onClose}>Cancelar</button><button className="btn primary">{goal ? 'Salvar alterações' : 'Criar meta'}</button></div></form></Modal>
 }
 
 function ContributionModal({ goal, onClose, onSubmit }) {
@@ -1566,8 +1679,25 @@ function ConfirmModal({ title, text, confirmLabel, danger = false, onClose, onCo
 }
 
 function Toast({ toast, onClose }) {
-  const icons = { success: '✓', warning: '!', error: '×' }
-  return <div className={`toast ${toast.tone || 'success'}`} role="status"><span>{icons[toast.tone] || icons.success}</span><p>{toast.message}</p><button onClick={onClose} aria-label="Fechar aviso">×</button></div>
+  const tone = toast.tone || 'success'
+  const config = {
+    success: { icon: '✓', eyebrow: 'Tudo certo', title: 'Operação concluída' },
+    warning: { icon: '!', eyebrow: 'Atenção', title: 'Verifique esta informação' },
+    error: { icon: '×', eyebrow: 'Não foi possível concluir', title: 'Algo deu errado' },
+  }[tone] || { icon: '✓', eyebrow: 'Tudo certo', title: 'Operação concluída' }
+
+  return (
+    <div className="feedback-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className={`feedback-popup ${tone}`} role="status" aria-live="polite" onMouseDown={event => event.stopPropagation()}>
+        <button className="feedback-close" type="button" onClick={onClose} aria-label="Fechar aviso">×</button>
+        <div className="feedback-icon" aria-hidden="true">{config.icon}</div>
+        <span className="feedback-eyebrow">{config.eyebrow}</span>
+        <h3>{config.title}</h3>
+        <p>{toast.message}</p>
+        <button className="btn primary feedback-action" type="button" onClick={onClose}>Entendi</button>
+      </section>
+    </div>
+  )
 }
 
 function EmptyState({ title, text, action, onAction }) {
