@@ -671,7 +671,6 @@ tbody tr:last-child td { border-bottom: 0; }
   .feedback-action { width: 100%; }
 }
 
-
 /* ===== Ajustes v9: gráficos combinados, categorias detalhadas, câmera e plano de metas ===== */
 .chart-legend i.balance {
   background: #6573d8;
@@ -996,4 +995,3 @@ tbody tr:last-child td { border-bottom: 0; }
   .heading-actions { flex-wrap: wrap; }
   .goal-monthly-plan > div { align-items: flex-start; flex-direction: column; gap: 3px; }
 }
-
