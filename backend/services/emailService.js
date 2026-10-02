@@ -1,19 +1,17 @@
 const { Resend } = require('resend');
 
-
 async function enviarCodigoVerificacao(email, codigo) {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY não configurada no backend/.env.');
+  }
 
-    if (!process.env.RESEND_API_KEY) {
-        throw new Error('RESEND_API_KEY não configurada no backend/.env.');
-    }
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const { data, error } = await resend.emails.send({
+    from: 'Custos Vision <onboarding@resend.dev>',
+    to: [email],
+    subject: 'Código de verificação - Custos Vision',
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const { data, error } = await resend.emails.send({
-        from: 'Custos Vision <onboarding@resend.dev>',
-        to: [email],
-        subject: 'Código de verificação - Custos Vision',
-
-        html: `
+    html: `
             <h2>Custos Vision</h2>
 
             <p>Seu código de verificação é:</p>
@@ -21,16 +19,16 @@ async function enviarCodigoVerificacao(email, codigo) {
             <h1>${codigo}</h1>
 
             <p>Esse código é válido por 10 minutos.</p>
-        `
-    });
+        `,
+  });
 
-    if (error) {
-        throw new Error(error.message);
-    }
+  if (error) {
+    throw new Error(error.message);
+  }
 
-    return data;
+  return data;
 }
 
 module.exports = {
-    enviarCodigoVerificacao
+  enviarCodigoVerificacao,
 };

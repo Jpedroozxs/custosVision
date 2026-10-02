@@ -1,13 +1,15 @@
 {
-  "name": "Custos Vision",
+  "name": "Custus Vision",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "ajustar-banco": "node scripts/ajustarBanco.js",
+    "test": "node --test tests/*.test.js"
   },
   "keywords": [],
-  "author": "João, Geovanni e Paulo",
+  "author": "João, Geovanni, Paulo e Luciano",
   "license": "MIT",
   "description": "Projeto sobre sistema financeiro que pode ajudar milhares de brasileiros a conquistar a sua independência financeira",
   "dependencies": {

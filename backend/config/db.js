@@ -8,8 +8,9 @@ const pool = mysql.createPool({
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'CustusVision',
+  dateStrings: true,
   waitForConnections: true,
-  queueLimit: 0
+  queueLimit: 0,
 });
 
 async function testarConexao() {

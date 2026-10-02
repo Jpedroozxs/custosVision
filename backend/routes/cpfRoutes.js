@@ -16,7 +16,7 @@ router.get('/validar', (req, res) => {
   return res.status(valido ? 200 : 422).json({
     valido,
     cpfFormatado: valido ? formatarCPF(cpf) : null,
-    mensagem: valido ? 'CPF válido.' : 'CPF inválido.'
+    mensagem: valido ? 'CPF válido.' : 'CPF inválido.',
   });
 });
 
@@ -33,7 +33,7 @@ router.post('/validar', (req, res) => {
   return res.status(valido ? 200 : 422).json({
     valido,
     cpfFormatado: valido ? formatarCPF(cpf) : null,
-    mensagem: valido ? 'CPF válido.' : 'CPF inválido.'
+    mensagem: valido ? 'CPF válido.' : 'CPF inválido.',
   });
 });
 

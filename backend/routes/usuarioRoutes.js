@@ -1,18 +1,22 @@
-const express=require('express');
-const controller=require('../controller/usuarioController');
-const router=express.Router();
+const express = require('express');
+const controller = require('../controller/usuarioController');
+const router = express.Router();
 
-router.get('/',controller.listar);
+const { autenticar, proprioUsuario, sair } = require('../utils/sessao');
+router.get('/', autenticar, controller.listar);
+router.post('/logout', autenticar, sair);
 
-router.post('/',controller.cadastrar);
-router.post('/login',controller.login);
+router.post('/', controller.cadastrar);
+router.post('/login', controller.login);
 
-router.get('/:id',controller.buscarPorId);
+router.get('/:id', autenticar, proprioUsuario, controller.buscarPorId);
 
-router.put('/:id',controller.atualizar);
+router.put('/:id', autenticar, proprioUsuario, controller.atualizar);
 
-router.patch('/:id',controller.atualizar);
+router.patch('/:id', autenticar, proprioUsuario, controller.atualizar);
 
-router.delete('/:id',controller.deletar);
+router.delete('/:id', autenticar, proprioUsuario, controller.deletar);
 
-module.exports=router;
+router.delete('/:id/dados-financeiros', autenticar, proprioUsuario, controller.redefinir);
+
+module.exports = router;
