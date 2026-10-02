@@ -268,6 +268,81 @@ function buildBalanceTimeline(transactions, limit = 12) {
   ]
 }
 
+
+function niceAxisStep(maxAbs, targetSteps = 4) {
+  const safeMax = Math.max(Math.abs(Number(maxAbs) || 0), 1)
+  const rawStep = safeMax / targetSteps
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
+  const normalized = rawStep / magnitude
+  const nice = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
+  return nice * magnitude
+}
+
+function buildSymmetricScale(values, targetSteps = 4) {
+  const maxAbs = Math.max(...values.map(value => Math.abs(Number(value) || 0)), 1)
+  const step = niceAxisStep(maxAbs, targetSteps)
+  const limit = Math.max(step, Math.ceil(maxAbs / step) * step)
+  const ticks = []
+  for (let value = limit; value >= -limit; value -= step) ticks.push(Math.abs(value) < step / 1000 ? 0 : value)
+  return { min: -limit, max: limit, range: limit * 2, step, ticks }
+}
+
+function formatAxisTick(value) {
+  const rounded = Math.round(Number(value) || 0)
+  const formatted = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(Math.abs(rounded))
+  if (rounded > 0) return `+${formatted}`
+  if (rounded < 0) return `−${formatted}`
+  return '0'
+}
+
+function groupTransactionsByDescription(items) {
+  const grouped = new Map()
+  items.forEach(item => {
+    const label = String(item.description || 'Sem descrição').trim() || 'Sem descrição'
+    const key = label.toLocaleLowerCase('pt-BR')
+    const current = grouped.get(key) || { label, value: 0, count: 0 }
+    current.value = fromCents(toCents(current.value) + toCents(item.value))
+    current.count += 1
+    grouped.set(key, current)
+  })
+  return [...grouped.values()].sort((a, b) => b.value - a.value)
+}
+
+function getMonthlyIncomeSummary(transactions) {
+  const incomes = transactions.filter(item => item.type === 'income')
+  const monthKeys = [...new Set(incomes.map(item => String(item.date || '').slice(0, 7)).filter(Boolean))]
+  const divisor = Math.max(monthKeys.length, 1)
+  const principalTotal = sumMoney(incomes.filter(item => item.category === 'Renda principal'))
+  const extraTotal = sumMoney(incomes.filter(item => item.category === 'Renda extra'))
+  return {
+    months: monthKeys.length,
+    principalAverage: fromCents(Math.round(toCents(principalTotal) / divisor)),
+    extraAverage: fromCents(Math.round(toCents(extraTotal) / divisor)),
+    totalAverage: fromCents(Math.round(toCents(principalTotal + extraTotal) / divisor)),
+  }
+}
+
+function getGoalMonthlyPlan(goal, incomeSummary) {
+  const target = Number(goal?.target) || 0
+  const saved = Number(goal?.saved) || 0
+  const remaining = Math.max(0, target - saved)
+  const deadline = parseDate(goal?.deadline)
+  if (!deadline || target <= 0) return null
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  deadline.setHours(0, 0, 0, 0)
+  const days = Math.ceil((deadline - today) / 86400000)
+  const months = days < 0 ? 0 : Math.max(1, Math.ceil(Math.max(days, 1) / 30.4375))
+  // A reserva mensal representa o planejamento original da meta:
+  // valor total do objetivo dividido pelo prazo restante. Os aportes alteram
+  // apenas o acumulado/progresso e não diminuem a parcela mensal planejada.
+  const monthly = months > 0 ? fromCents(Math.ceil(toCents(target) / months)) : target
+  const incomeAverage = Number(incomeSummary?.totalAverage) || 0
+  const incomeShare = incomeAverage > 0 ? (monthly / incomeAverage) * 100 : null
+  return { remaining, months, monthly, incomeAverage, incomeShare }
+}
+
 function passwordStrength(password) {
   let score = 0
   if (password.length >= 6) score += 1
@@ -2269,7 +2344,7 @@ function TransactionTable({ items, compact = false, onEdit, onDelete }) {
   )
 }
 
-function Goals({ goals, setModal }) {
+function Goals({ goals, transactions, setModal }) {
   const overdue = goals.filter(isGoalOverdue)
   const totalTarget = sumMoney(goals, (goal) => goal.target)
   const totalSaved = sumMoney(goals, (goal) =>
@@ -2373,10 +2448,11 @@ function Goals({ goals, setModal }) {
   )
 }
 
-function GoalCard({ goal, onContribution, onEdit, onDelete }) {
+function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
   const progress = goalProgress(goal)
   const status = goalStatus(goal)
   const days = daysUntil(goal.deadline)
+  const plan = getGoalMonthlyPlan(goal, incomeSummary)
 
   const saved = Number(goal.saved) || 0
   const target = Number(goal.target) || 0
@@ -2385,21 +2461,16 @@ function GoalCard({ goal, onContribution, onEdit, onDelete }) {
   let deadlineText = 'Sem prazo definido'
 
   if (goal.deadline) {
-    if (status === 'Concluída') {
-      deadlineText = 'Meta concluída'
-    } else if (days === 0) {
-      deadlineText = 'Vence hoje'
-    } else if (days < 0) {
+    if (status === 'Concluída') deadlineText = 'Meta concluída'
+    else if (days === 0) deadlineText = 'Vence hoje'
+    else if (days < 0) {
       const overdueDays = Math.abs(days)
       deadlineText = `Vencida há ${overdueDays} dia${overdueDays !== 1 ? 's' : ''}`
-    } else {
-      deadlineText = `${days} dia${days !== 1 ? 's' : ''} restante${days !== 1 ? 's' : ''}`
-    }
+    } else deadlineText = `${days} dia${days !== 1 ? 's' : ''} restante${days !== 1 ? 's' : ''}`
   }
 
   return (
     <article className={`goal-card ${status === 'Concluída' ? 'goal-card-complete' : status === 'Vencida' ? 'goal-card-overdue' : 'goal-card-active'}`}>
-
       <div className="goal-card-header">
         <div>
           <span
@@ -2445,11 +2516,10 @@ function GoalCard({ goal, onContribution, onEdit, onDelete }) {
         <i style={{ width: `${progress}%` }} />
       </div>
 
-      <div className="goal-card-details">
-        <div>
-          <span>Falta</span>
-          <strong>{money.format(remaining)}</strong>
-        </div>
+      <div className="goal-values"><div><span>Acumulado</span><strong>{money.format(saved)}</strong></div><div><span>Objetivo</span><strong>{money.format(target)}</strong></div></div>
+      <div className="goal-progress-info"><span>Progresso</span><strong>{formatProgress(progress)}</strong></div>
+      <div className="goal-progress-bar"><i style={{ width: `${progress}%` }} /></div>
+      <div className="goal-card-details"><div><span>Falta</span><strong>{money.format(remaining)}</strong></div><div><span>Prazo</span><strong>{goal.deadline && parseDate(goal.deadline) ? dateLongFmt.format(parseDate(goal.deadline)) : '—'}</strong></div></div>
 
         <div>
           <span>Prazo</span>
@@ -2812,6 +2882,77 @@ function MoneyInput({
       }}
     />
   )
+}
+
+function ReceiptScanner({ transactionType }) {
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [preview, setPreview] = useState('')
+  const [error, setError] = useState('')
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const fileRef = useRef(null)
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(track => track.stop())
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+  }
+
+  useEffect(() => {
+    if (!cameraOpen) return undefined
+    let active = true
+    const openCamera = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('camera-unavailable')
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+        if (!active) return stream.getTracks().forEach(track => track.stop())
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play().catch(() => {})
+        }
+      } catch {
+        if (active) {
+          setError('Não foi possível abrir a câmera ao vivo. Você pode escolher uma foto da nota fiscal.')
+          setCameraOpen(false)
+          setTimeout(() => fileRef.current?.click(), 0)
+        }
+      }
+    }
+    openCamera()
+    return () => { active = false; stopCamera() }
+  }, [cameraOpen])
+
+  const capture = () => {
+    const video = videoRef.current
+    if (!video?.videoWidth || !video?.videoHeight) return setError('Aguarde a imagem da câmera aparecer antes de capturar.')
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+    setPreview(canvas.toDataURL('image/jpeg', .86))
+    setError('')
+    setCameraOpen(false)
+    stopCamera()
+  }
+
+  const selectImage = event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => { setPreview(String(reader.result || '')); setError(''); setCameraOpen(false); stopCamera() }
+    reader.readAsDataURL(file)
+    event.target.value = ''
+  }
+
+  return <div className="receipt-scanner full-field">
+    <input ref={fileRef} className="receipt-file-input" type="file" accept="image/*" capture="environment" onChange={selectImage} />
+    <div className="receipt-scanner-intro"><div><span className="receipt-scanner-icon">▣</span><div><strong>Nota fiscal pela câmera</strong><small>Capture a nota para preparar o lançamento automático.</small></div></div><button type="button" className="receipt-camera-button" onClick={() => { setPreview(''); setError(''); setCameraOpen(true) }}>⌁ Abrir câmera</button></div>
+    {cameraOpen && <div className="receipt-camera-live"><video ref={videoRef} autoPlay muted playsInline /><div><button type="button" className="btn secondary" onClick={() => { setCameraOpen(false); stopCamera() }}>Cancelar</button><button type="button" className="btn primary" onClick={capture}>Capturar nota</button></div></div>}
+    {preview && <div className="receipt-preview"><img src={preview} alt="Prévia da nota fiscal capturada" /><div><strong>Nota capturada</strong><p>A imagem está pronta para a futura leitura automática de estabelecimento, valor e data. Nesta versão somente frontend, os campos continuam sob seu controle.</p><button type="button" onClick={() => setPreview('')}>Remover imagem</button></div></div>}
+    {error && <p className="receipt-camera-error">{error}</p>}
+    <small className="receipt-scanner-note">Disponível tanto para {transactionType === 'income' ? 'rendas' : 'despesas'}. A automação completa depende da integração de OCR/leitura fiscal em uma próxima etapa.</small>
+  </div>
 }
 
 function TransactionModal({ categories, initialType, transaction, onClose, onSubmit }) {
