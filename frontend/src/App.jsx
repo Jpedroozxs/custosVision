@@ -8,6 +8,8 @@ const percentFmt = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 })
 const dateShortFmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' })
 const dateLongFmt = new Intl.DateTimeFormat('pt-BR')
 
+const chartPalette = ['#7c5ce0', '#3284d6', '#e58a32', '#d95887', '#23a58c', '#ba65cf', '#bd6546', '#6b8d32']
+
 const initialCategories = [
   'Alimentação',
   'Moradia',
@@ -80,17 +82,25 @@ async function hashPassword(password) {
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${localStorage.getItem(AUTH_TOKEN_KEY) || ''}`,
-      ...(options.headers || {}),
-    },
-  })
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem(AUTH_TOKEN_KEY) || ''}`,
+        ...(options.headers || {}),
+      },
+    })
+  } catch {
+    throw new Error('Não foi possível conectar ao servidor. Verifique se o backend está ligado e tente novamente.')
+  }
 
   const contentType = response.headers.get('content-type') || ''
-  const payload = contentType.includes('application/json') ? await response.json() : null
+  if (!contentType.includes('application/json')) {
+    throw new Error('O servidor não retornou os dados da API. Verifique se o backend está ligado e se o endereço da API está correto.')
+  }
+  const payload = await response.json()
   if (!response.ok) {
     const error = new Error(
       payload?.erro ||
@@ -741,10 +751,20 @@ function App() {
     const cleanName = name.trim()
     if (!cleanName) { notify('Informe um nome para a categoria.', 'warning'); return { ok: false, error: 'Informe um nome para a categoria.' } }
     if (categories.some(category => category.toLowerCase() === cleanName.toLowerCase())) { notify('Essa categoria já existe.', 'warning'); return { ok: false, error: 'Essa categoria já existe.' } }
-    persist('categories', [...categories, cleanName], setCategories)
-    setModal(null)
-    notify('Categoria criada.')
-    return { ok: true }
+    try {
+      const saved = await apiRequest('/categorias', {
+        method: 'POST',
+        body: JSON.stringify({ nome: cleanName }),
+      })
+      setDatabaseCategories((items) => [...items, saved])
+      setCategories((items) => [...items, saved.nome])
+      setModal(null)
+      notify('Categoria criada.')
+      return { ok: true }
+    } catch (error) {
+      notify(error.message, 'error')
+      return { ok: false, error: error.message }
+    }
   }
   const removeCategory = async (category) => {
     try {
@@ -869,7 +889,11 @@ function App() {
           role="status"
           style={{ margin: 0, padding: '10px 24px', background: '#eaf8f1', fontSize: 12 }}
         >
-          {'Seus dados financeiros estão salvos na sua conta.'}
+          {workspaceLoading
+            ? 'Carregando seus dados financeiros...'
+            : workspaceError
+              ? 'Não foi possível carregar seus dados financeiros.'
+              : 'Seus dados financeiros estão salvos na sua conta.'}
         </p>
         <Topbar
           page={page}
@@ -878,6 +902,19 @@ function App() {
           overdueCount={overdueGoals.length}
         />
 
+        {workspaceError && (
+          <div className="page" role="alert">
+            <p className="form-error">{workspaceError}</p>
+            <button className="btn primary" onClick={() => {
+              setWorkspaceError('')
+              setWorkspaceLoading(true)
+              setAuthUser((current) => ({ ...current }))
+            }}>Tentar novamente</button>
+            <button className="btn secondary" onClick={logout}>Voltar ao login</button>
+          </div>
+        )}
+
+        {!workspaceLoading && !workspaceError && <>
         {page === 'dashboard' && (
           <Dashboard
             totals={totals}
@@ -906,6 +943,7 @@ function App() {
             onLogout={() => setModal({ type: 'logout' })}
           />
         )}
+        </>}
       </main>
 
       <MobileNav page={page} setPage={setPage} overdueCount={overdueGoals.length} />
@@ -1950,7 +1988,7 @@ function CashFlowChart({ data }) {
 }
 
 function DonutChart({ data, totalLabel, totalFormatter, valueFormatter, compact = false }) {
-  const palette = ['var(--purple)', '#6bc79f', '#4c83cb', '#ef8e62', '#e0649a', '#58b987']
+  const palette = chartPalette
   const total = sumMoney(data)
   const radius = compact ? 48 : 56
   const circumference = 2 * Math.PI * radius
@@ -1975,7 +2013,7 @@ function DonutChart({ data, totalLabel, totalFormatter, valueFormatter, compact 
                 r={radius}
                 className="donut-segment"
                 style={{
-                  stroke: palette[index % palette.length],
+                  stroke: item.color || palette[index % palette.length],
                   strokeDasharray: `${dash} ${circumference - dash}`,
                   strokeDashoffset: offset,
                 }}
@@ -1994,7 +2032,7 @@ function DonutChart({ data, totalLabel, totalFormatter, valueFormatter, compact 
           return (
             <div className="donut-legend-row" key={item.label}>
               <span>
-                <i style={{ background: palette[index % palette.length] }} />
+                <i style={{ background: item.color || palette[index % palette.length] }} />
                 {item.label}
               </span>
               <strong>{valueFormatter(item.value)}</strong>
@@ -2516,11 +2554,11 @@ function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
         <i style={{ width: `${progress}%` }} />
       </div>
 
-      <div className="goal-values"><div><span>Acumulado</span><strong>{money.format(saved)}</strong></div><div><span>Objetivo</span><strong>{money.format(target)}</strong></div></div>
-      <div className="goal-progress-info"><span>Progresso</span><strong>{formatProgress(progress)}</strong></div>
-      <div className="goal-progress-bar"><i style={{ width: `${progress}%` }} /></div>
-      <div className="goal-card-details"><div><span>Falta</span><strong>{money.format(remaining)}</strong></div><div><span>Prazo</span><strong>{goal.deadline && parseDate(goal.deadline) ? dateLongFmt.format(parseDate(goal.deadline)) : '—'}</strong></div></div>
-
+      <div className="goal-card-details">
+        <div>
+          <span>Falta</span>
+          <strong>{money.format(remaining)}</strong>
+        </div>
         <div>
           <span>Prazo</span>
           <strong>
@@ -2546,19 +2584,32 @@ function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
 }
 
 function Categories({ categories, transactions, setModal }) {
+  const [selectedCategory, setSelectedCategory] = useState(null)
+  // Uma categoria excluída não pode manter o gráfico preso a um filtro antigo.
+  const activeCategory = categories.includes(selectedCategory) ? selectedCategory : null
   const expenseTransactions = transactions.filter((item) => item.type === 'expense')
   const totalExpenses = sumMoney(expenseTransactions)
   const data = categories
     .map((category, index) => {
       const items = expenseTransactions.filter((item) => item.category === category)
-      const total = sumMoney(items)
-      return { category, total, count: items.length, index }
+      return { category, total: sumMoney(items), count: items.length, index,
+        color: chartPalette[index % chartPalette.length] }
     })
     .sort((a, b) => b.total - a.total)
-  const chartData = data
-    .filter((item) => item.total > 0)
-    .slice(0, 5)
-    .map((item) => ({ label: item.category, value: item.total }))
+  const filteredExpenses = activeCategory
+    ? expenseTransactions.filter((item) => item.category === activeCategory)
+    : expenseTransactions
+  const filteredTotal = sumMoney(filteredExpenses)
+  // Ao selecionar, detalha as despesas da categoria por descrição.
+  const chartData = activeCategory
+    ? groupTransactionsByDescription(filteredExpenses).map((item, index) => ({
+        ...item, color: chartPalette[index % chartPalette.length],
+      }))
+    : data.filter((item) => item.total > 0).map((item) => ({
+        label: item.category, value: item.total, color: item.color,
+      }))
+  const selectCategory = (category) =>
+    setSelectedCategory((current) => current === category ? null : category)
 
   return (
     <div className="page">
@@ -2566,22 +2617,20 @@ function Categories({ categories, transactions, setModal }) {
         <div>
           <span className="section-kicker">ORGANIZAÇÃO</span>
           <h2>Categorias</h2>
-          <p>
-            Entenda quais áreas concentram mais despesas e mantenha seus registros consistentes.
-          </p>
+          <p>Selecione uma categoria para ver apenas as despesas dela no gráfico.</p>
         </div>
         <button className="btn primary" onClick={() => setModal({ type: 'category' })}>
           ＋ Nova categoria
         </button>
       </section>
-      <section className="category-overview panel">
+      <section className="category-overview panel" aria-live="polite">
         <div>
-          <span>Total em despesas</span>
-          <strong>{money.format(totalExpenses)}</strong>
+          <span>{activeCategory ? `Total em ${activeCategory}` : 'Total em despesas'}</span>
+          <strong>{money.format(filteredTotal)}</strong>
         </div>
         <div>
-          <span>Categorias ativas</span>
-          <strong>{data.filter((item) => item.count > 0).length}</strong>
+          <span>{activeCategory ? 'Lançamentos na categoria' : 'Categorias ativas'}</span>
+          <strong>{activeCategory ? filteredExpenses.length : data.filter((item) => item.count > 0).length}</strong>
         </div>
         <div>
           <span>Categorias cadastradas</span>
@@ -2589,78 +2638,67 @@ function Categories({ categories, transactions, setModal }) {
         </div>
       </section>
 
+      <div className="category-filter-status">
+        <p className="category-click-hint" aria-live="polite">
+          {activeCategory ? `Filtro: ${activeCategory}. Clique novamente no cartão para remover.` : 'Exibindo todas as categorias. Clique em um cartão abaixo para filtrar.'}
+        </p>
+        {activeCategory && <button className="btn secondary" onClick={() => setSelectedCategory(null)}>Mostrar todas</button>}
+      </div>
       <section className="dashboard-grid dashboard-grid-charts page-charts-inline">
         <div className="panel chart-panel chart-panel-large">
           <PanelHeader
-            title="Categorias que mais pesam"
-            subtitle="Participação das principais despesas"
+            title={activeCategory ? `Despesas de ${activeCategory}` : 'Despesas por categoria'}
+            subtitle={activeCategory ? 'Valores agrupados pela descrição do lançamento' : 'Participação de todas as categorias com despesas'}
           />
           {chartData.length ? (
-            <DonutChart
-              data={chartData}
-              totalLabel="Despesas"
+            <DonutChart data={chartData} totalLabel="Despesas"
               totalFormatter={(value) => money.format(value)}
-              valueFormatter={(value) => money.format(value)}
-            />
+              valueFormatter={(value) => money.format(value)} />
           ) : (
-            <MiniEmpty text="Registre despesas para ver a participação de cada categoria." />
+            <MiniEmpty text={activeCategory ? 'Esta categoria ainda não possui despesas.' : 'Registre despesas para ver a participação de cada categoria.'} />
           )}
         </div>
         <div className="panel insight-panel">
-          <PanelHeader title="Leitura rápida" subtitle="Resumo proporcional das categorias" />
-          {data.some((item) => item.total > 0) ? (
+          <PanelHeader title="Leitura rápida" subtitle={activeCategory ? `Despesas de ${activeCategory}` : 'Resumo proporcional das categorias'} />
+          {chartData.length ? (
             <div className="category-bars">
-              {data
-                .filter((item) => item.total > 0)
-                .slice(0, 5)
-                .map(({ category, total }) => {
-                  const share = totalExpenses > 0 ? (total / totalExpenses) * 100 : 0
-                  return (
-                    <div className="category-bar-row" key={category}>
-                      <div>
-                        <strong>{category}</strong>
-                        <span>{money.format(total)}</span>
-                      </div>
-                      <div className="category-track">
-                        <i style={{ width: `${share}%` }} />
-                      </div>
-                    </div>
-                  )
-                })}
+              {chartData.map(({ label, value, color }) => {
+                const share = filteredTotal > 0 ? (value / filteredTotal) * 100 : 0
+                return (
+                  <div className="category-bar-row" key={label}>
+                    <div><strong>{label}</strong><span>{money.format(value)}</span></div>
+                    <div className="category-track"><i style={{ width: `${share}%`, background: color }} /></div>
+                  </div>
+                )
+              })}
             </div>
           ) : (
-            <MiniEmpty text="As categorias passam a ganhar comparação visual assim que houver despesas." />
+            <MiniEmpty text={activeCategory ? 'Nenhum lançamento nesta categoria.' : 'As categorias passam a ganhar comparação visual assim que houver despesas.'} />
           )}
         </div>
       </section>
 
       <div className="category-grid">
-        {data.map(({ category, total, count, index }) => {
+        {data.map(({ category, total, count, index, color }) => {
           const share = totalExpenses > 0 ? Math.round((total / totalExpenses) * 100) : 0
           return (
-            <article className="category-card" key={category}>
-              <span className={`category-symbol c${index % 5}`}>
-                {['⌂', '◉', '▤', '◆', '＋'][index % 5]}
-              </span>
-              <div className="category-card-main">
-                <div className="category-title-row">
-                  <h3>{category}</h3>
-                  <span>{share}%</span>
-                </div>
-                <p>
-                  {money.format(total)} · {count} lançamento{count !== 1 ? 's' : ''}
-                </p>
-                <div className="category-progress">
-                  <i style={{ width: `${share}%` }} />
-                </div>
-              </div>
-              <button
-                className="icon-button subtle danger"
-                title="Excluir categoria"
-                onClick={() => setModal({ type: 'delete-category', category })}
-              >
-                ×
+            <article className={`category-card category-card-filterable ${activeCategory === category ? 'selected' : ''}`}
+              key={category} style={{ '--category-color': color }}>
+              <button type="button" className="category-filter-button"
+                aria-label={`Filtrar categoria ${category}`} aria-pressed={activeCategory === category}
+                onClick={() => selectCategory(category)}>
+                <span className="category-symbol" style={{ color, background: `${color}18` }}>
+                  {['⌂', '◉', '▤', '◆', '＋'][index % 5]}
+                </span>
+                <span className="category-card-main">
+                  <span className="category-title-row"><span className="category-name">{category}</span><span style={{ color }}>{share}%</span></span>
+                  <span className="category-card-summary">{money.format(total)} · {count} lançamento{count !== 1 ? 's' : ''}</span>
+                  <span className="category-progress"><i style={{ width: `${share}%`, background: color }} /></span>
+                </span>
               </button>
+              <button type="button" className="icon-button subtle danger" title="Excluir categoria"
+                aria-label={`Excluir categoria ${category}`}
+                onClick={() => setModal({ type: 'delete-category', category })}>×</button>
             </article>
           )
         })}
