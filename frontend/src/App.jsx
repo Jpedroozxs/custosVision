@@ -8,6 +8,8 @@ const percentFmt = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 })
 const dateShortFmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' })
 const dateLongFmt = new Intl.DateTimeFormat('pt-BR')
 
+const chartPalette = ['#7c5ce0', '#3284d6', '#e58a32', '#d95887', '#23a58c', '#ba65cf', '#bd6546', '#6b8d32']
+
 const initialCategories = [
   'Alimentação',
   'Moradia',
@@ -22,6 +24,10 @@ const AUTH_SESSION_KEY = 'cv-auth-session'
 const AUTH_TOKEN_KEY = 'cv-auth-token'
 const MAX_VALUE = 99999999.99
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
+
+function capitalizeFirstLetter(value = '') {
+  return String(value).replace(/^(\s*)([a-zà-ÿ])/i, (_, spaces, letter) => `${spaces}${letter.toUpperCase()}`)
+}
 
 function todayInputValue() {
   const now = new Date()
@@ -80,17 +86,25 @@ async function hashPassword(password) {
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${localStorage.getItem(AUTH_TOKEN_KEY) || ''}`,
-      ...(options.headers || {}),
-    },
-  })
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem(AUTH_TOKEN_KEY) || ''}`,
+        ...(options.headers || {}),
+      },
+    })
+  } catch {
+    throw new Error('Não foi possível conectar ao servidor. Verifique se o backend está ligado e tente novamente.')
+  }
 
   const contentType = response.headers.get('content-type') || ''
-  const payload = contentType.includes('application/json') ? await response.json() : null
+  if (!contentType.includes('application/json')) {
+    throw new Error('O servidor não retornou os dados da API. Verifique se o backend está ligado e se o endereço da API está correto.')
+  }
+  const payload = await response.json()
   if (!response.ok) {
     const error = new Error(
       payload?.erro ||
@@ -334,13 +348,30 @@ function getGoalMonthlyPlan(goal, incomeSummary) {
   deadline.setHours(0, 0, 0, 0)
   const days = Math.ceil((deadline - today) / 86400000)
   const months = days < 0 ? 0 : Math.max(1, Math.ceil(Math.max(days, 1) / 30.4375))
-  // A reserva mensal representa o planejamento original da meta:
-  // valor total do objetivo dividido pelo prazo restante. Os aportes alteram
-  // apenas o acumulado/progresso e não diminuem a parcela mensal planejada.
-  const monthly = months > 0 ? fromCents(Math.ceil(toCents(target) / months)) : target
+  const monthly = months > 0 ? fromCents(Math.ceil(toCents(remaining) / months)) : remaining
   const incomeAverage = Number(incomeSummary?.totalAverage) || 0
   const incomeShare = incomeAverage > 0 ? (monthly / incomeAverage) * 100 : null
-  return { remaining, months, monthly, incomeAverage, incomeShare }
+  return { remaining, months, monthly, incomeAverage, incomeShare, principalAverage: incomeSummary?.principalAverage || 0, extraAverage: incomeSummary?.extraAverage || 0, overdue: days < 0 }
+}
+
+
+// O plano sugerido pertence à criação da meta e não muda com aportes posteriores.
+// Persistência exclusiva do frontend, separada por usuário e identificador da meta.
+function fixedGoalPlanKey(goalId) {
+  const accountId = localStorage.getItem(AUTH_SESSION_KEY) || 'sem-sessao'
+  return `cv-goal-original-plan:${accountId}:${goalId}`
+}
+
+function getFixedGoalPlan(goal, incomeSummary) {
+  if (!goal?.id) return getGoalMonthlyPlan(goal, incomeSummary)
+  const key = fixedGoalPlanKey(goal.id)
+  try {
+    const stored = JSON.parse(localStorage.getItem(key) || 'null')
+    if (stored && typeof stored.monthly === 'number') return stored
+  } catch { /* Plano antigo inválido: gera um registro uma única vez. */ }
+  const original = getGoalMonthlyPlan(goal, incomeSummary)
+  if (original) localStorage.setItem(key, JSON.stringify(original))
+  return original
 }
 
 function passwordStrength(password) {
@@ -693,6 +724,7 @@ function App() {
         }),
       })
       const goal = mapApiGoal(saved)
+      if (!id) getFixedGoalPlan(goal, getMonthlyIncomeSummary(transactions))
       setGoals((items) =>
         id ? items.map((item) => (item.id === id ? goal : item)) : [goal, ...items],
       )
@@ -708,6 +740,7 @@ function App() {
     try {
       await apiRequest(`/metas/${id}`, { method: 'DELETE' })
       setGoals((items) => items.filter((item) => item.id !== id))
+      localStorage.removeItem(fixedGoalPlanKey(id))
       setModal(null)
       notify('Meta excluída.')
     } catch (error) {
@@ -741,10 +774,20 @@ function App() {
     const cleanName = name.trim()
     if (!cleanName) { notify('Informe um nome para a categoria.', 'warning'); return { ok: false, error: 'Informe um nome para a categoria.' } }
     if (categories.some(category => category.toLowerCase() === cleanName.toLowerCase())) { notify('Essa categoria já existe.', 'warning'); return { ok: false, error: 'Essa categoria já existe.' } }
-    persist('categories', [...categories, cleanName], setCategories)
-    setModal(null)
-    notify('Categoria criada.')
-    return { ok: true }
+    try {
+      const saved = await apiRequest('/categorias', {
+        method: 'POST',
+        body: JSON.stringify({ nome: cleanName }),
+      })
+      setDatabaseCategories((items) => [...items, saved])
+      setCategories((items) => [...items, saved.nome])
+      setModal(null)
+      notify('Categoria criada.')
+      return { ok: true }
+    } catch (error) {
+      notify(error.message, 'error')
+      return { ok: false, error: error.message }
+    }
   }
   const removeCategory = async (category) => {
     try {
@@ -826,25 +869,6 @@ function App() {
     notify('Backup exportado com sucesso.')
   }
 
-  const resetWorkspace = async () => {
-    try {
-      await apiRequest(`/usuarios/${authUser.id}/dados-financeiros`, { method: 'DELETE' })
-      setTransactions([])
-      setGoals([])
-      setModal(null)
-      try {
-        const rows = await apiRequest('/categorias')
-        setDatabaseCategories(rows)
-        setCategories(rows.map((item) => item.nome))
-        notify('Dados financeiros redefinidos. Seu perfil foi mantido.')
-      } catch {
-        setWorkspaceError('Dados redefinidos. Atualize a página para carregar as categorias.')
-      }
-    } catch (error) {
-      notify(error.message, 'error')
-    }
-  }
-
   const completeRegistration = account => {
     if (!account?.id) return
     localStorage.setItem(AUTH_SESSION_KEY, account.id)
@@ -869,7 +893,11 @@ function App() {
           role="status"
           style={{ margin: 0, padding: '10px 24px', background: '#eaf8f1', fontSize: 12 }}
         >
-          {'Seus dados financeiros estão salvos na sua conta.'}
+          {workspaceLoading
+            ? 'Carregando seus dados financeiros...'
+            : workspaceError
+              ? 'Não foi possível carregar seus dados financeiros.'
+              : 'Seus dados financeiros estão salvos na sua conta.'}
         </p>
         <Topbar
           page={page}
@@ -878,6 +906,19 @@ function App() {
           overdueCount={overdueGoals.length}
         />
 
+        {workspaceError && (
+          <div className="page" role="alert">
+            <p className="form-error">{workspaceError}</p>
+            <button className="btn primary" onClick={() => {
+              setWorkspaceError('')
+              setWorkspaceLoading(true)
+              setAuthUser((current) => ({ ...current }))
+            }}>Tentar novamente</button>
+            <button className="btn secondary" onClick={logout}>Voltar ao login</button>
+          </div>
+        )}
+
+        {!workspaceLoading && !workspaceError && <>
         {page === 'dashboard' && (
           <Dashboard
             totals={totals}
@@ -892,7 +933,7 @@ function App() {
         {page === 'transactions' && (
           <Transactions transactions={transactions} categories={categories} setModal={setModal} />
         )}
-        {page === 'goals' && <Goals goals={goals} setModal={setModal} />}
+        {page === 'goals' && <Goals goals={goals} transactions={transactions} setModal={setModal} />}
         {page === 'categories' && (
           <Categories categories={categories} transactions={transactions} setModal={setModal} />
         )}
@@ -902,10 +943,10 @@ function App() {
             onSave={saveProfile}
             onChangePassword={() => setModal({ type: 'password' })}
             onExport={exportBackup}
-            onReset={() => setModal({ type: 'reset' })}
             onLogout={() => setModal({ type: 'logout' })}
           />
         )}
+        </>}
       </main>
 
       <MobileNav page={page} setPage={setPage} overdueCount={overdueGoals.length} />
@@ -924,6 +965,7 @@ function App() {
       {modal?.type === 'goal' && (
         <GoalModal
           goal={modal.goal}
+          incomeSummary={getMonthlyIncomeSummary(transactions)}
           onClose={() => setModal(null)}
           onSubmit={(...args) => runOperation(() => (modal.goal ? updateGoal : addGoal)(...args))}
         />
@@ -986,17 +1028,6 @@ function App() {
           onConfirm={logout}
         />
       )}
-      {modal?.type === 'reset' && (
-        <ConfirmModal
-          title="Redefinir dados financeiros?"
-          text="Todos os lançamentos e metas desta conta serão apagados. As categorias voltarão ao padrão. Seu login e perfil serão mantidos."
-          confirmLabel="Redefinir dados"
-          danger
-          onClose={() => setModal(null)}
-          onConfirm={() => runOperation(resetWorkspace)}
-        />
-      )}
-
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
     </div>
   )
@@ -1202,7 +1233,7 @@ function AuthScreen({ onLogin, onRegister, onRegistrationComplete }) {
                     autoComplete="name"
                     required
                     value={name}
-                    onChange={(event) => setName(event.target.value)}
+                    onChange={(event) => setName(capitalizeFirstLetter(event.target.value))}
                     placeholder="Seu nome"
                   />
                 </Field>
@@ -1518,7 +1549,7 @@ function Dashboard({ totals, transactions, goals, profile, setPage, setModal }) 
           subtitle="Cada renda faz a linha subir; cada despesa faz a linha cair"
         />
         {transactions.length ? (
-          <RunningBalanceChart data={balanceTimeline} />
+          <DashboardBalanceBars data={balanceTimeline} />
         ) : (
           <MiniEmpty text="Adicione uma renda ou despesa para começar a formar sua curva de saldo." />
         )}
@@ -1531,7 +1562,7 @@ function Dashboard({ totals, transactions, goals, profile, setPage, setModal }) 
             subtitle="Seis meses até o lançamento mais recente"
           />
           {transactions.length ? (
-            <CashFlowChart data={monthlySeries} />
+            <DashboardCashFlowRows data={monthlySeries} />
           ) : (
             <MiniEmpty text="Adicione lançamentos para acompanhar a evolução mensal em gráfico." />
           )}
@@ -1565,23 +1596,7 @@ function Dashboard({ totals, transactions, goals, profile, setPage, setModal }) 
             onAction={() => setPage('categories')}
           />
           {categoryTotals.length ? (
-            <div className="category-bars">
-              {categoryTotals.map((item) => (
-                <div className="category-bar-row" key={item.label}>
-                  <div>
-                    <strong>{item.label}</strong>
-                    <span>{money.format(item.value)}</span>
-                  </div>
-                  <div className="category-track">
-                    <i
-                      style={{
-                        width: `${expenseTotal > 0 ? (item.value / expenseTotal) * 100 : (item.value / maxCategory) * 100}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <CategoryRankingChart data={categoryTotals} total={expenseTotal} />
           ) : (
             <MiniEmpty text="Quando você registrar despesas, este resumo aparece aqui." />
           )}
@@ -1644,7 +1659,9 @@ function Dashboard({ totals, transactions, goals, profile, setPage, setModal }) 
             onAction={() => setPage('goals')}
           />
           {goals.length ? (
-            goals.slice(0, 3).map((goal) => <GoalMini key={goal.id} goal={goal} />)
+            <div className="goal-summary-list">
+              {goals.slice(0, 3).map((goal) => <GoalMini key={goal.id} goal={goal} />)}
+            </div>
           ) : (
             <MiniEmpty text="Crie uma meta e acompanhe o progresso por aqui." />
           )}
@@ -1693,33 +1710,113 @@ function PanelHeader({ title, subtitle, action, onAction }) {
   )
 }
 
-function RunningBalanceChart({ data }) {
-  const width = 760
-  const height = 270
-  const padding = { top: 22, right: 24, bottom: 42, left: 138 }
-  const chartWidth = width - padding.left - padding.right
-  const chartHeight = height - padding.top - padding.bottom
-  const balances = data.map((item) => Number(item.balance) || 0)
-  const rawMin = Math.min(0, ...balances)
-  const rawMax = Math.max(0, ...balances)
-  const spread = Math.max(rawMax - rawMin, 1)
-  const margin = Math.max(spread * 0.12, 1)
-  const minValue = rawMin - margin
-  const maxValue = rawMax + margin
-  const range = Math.max(maxValue - minValue, 1)
-  const stepX = data.length > 1 ? chartWidth / (data.length - 1) : 0
-  const xForIndex = (index) => padding.left + index * stepX
-  const yForValue = (value) => padding.top + ((maxValue - value) / range) * chartHeight
-  const zeroY = yForValue(0)
-  const current = data[data.length - 1]
-  const previous = data.length > 1 ? data[data.length - 2] : current
-  const lastDelta = fromCents(toCents(current?.balance || 0) - toCents(previous?.balance || 0))
-  const signature = data.map((item) => `${item.id}-${item.balance}`).join('|')
-  const gridValues = [0, 0.25, 0.5, 0.75, 1].map((step) => minValue + range * step)
+function DashboardBalanceBars({ data }) {
+  const visible = data.slice(-8)
+  const current = visible[visible.length - 1]
+  const values = visible.map((item) => Number(item.balance) || 0)
+  const scale = buildSymmetricScale(values.length ? values : [0], 4)
+  const positionForValue = (value) => ((Number(value) - scale.min) / scale.range) * 100
+  const zeroBottom = positionForValue(0)
 
   return (
-    <div className="running-balance-shell">
-      <div className="running-balance-head">
+    <div className="balance-bars-shell compact">
+      <div className="balance-bars-head compact">
+        <div>
+          <span>Saldo atual</span>
+          <strong className={(current?.balance || 0) >= 0 ? 'positive' : 'negative'}>
+            {money.format(current?.balance || 0)}
+          </strong>
+        </div>
+        <small>{Math.max(visible.length - 1, 0)} movimentações visíveis</small>
+      </div>
+      <div className="balance-bars-grid compact" role="img" aria-label="Saldo em colunas verticais">
+        <div className="balance-y-axis compact">
+          {scale.ticks.map((tick) => (
+            <span key={tick} style={{ bottom: `${positionForValue(tick)}%` }}>
+              {money.format(tick)}
+            </span>
+          ))}
+        </div>
+        <div className="balance-bars-area compact">
+          <div className="balance-zero-line" style={{ bottom: `${zeroBottom}%` }} />
+          {visible.map((item, index) => {
+            const value = Number(item.balance) || 0
+            const barHeight = Math.max(Math.abs(positionForValue(value) - zeroBottom), 3)
+            const isPositive = value >= 0
+            const date = parseDate(item.date)
+            const label =
+              index === 0 ? 'Início' : date ? date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'
+            return (
+              <div className="balance-bar-column" key={item.id}>
+                <div className="balance-bar-stage">
+                  <div className="balance-bar-value-chip">{money.format(value)}</div>
+                  <i
+                    className={`balance-vertical-bar ${isPositive ? 'positive' : 'negative'} ${item.type === 'start' ? 'neutral' : ''}`}
+                    style={isPositive ? { height: `${barHeight}%`, bottom: `${zeroBottom}%` } : { height: `${barHeight}%`, top: `${100 - zeroBottom}%` }}
+                    title={`${label}: ${money.format(value)}`}
+                  />
+                </div>
+                <strong>{label}</strong>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      <div className="balance-bars-legend">
+        <span><i className="positive" />Saldo positivo</span>
+        <span><i className="negative" />Saldo negativo</span>
+        <span><i className="neutral" />Ponto inicial</span>
+      </div>
+    </div>
+  )
+}
+
+function DashboardCashFlowRows({ data }) {
+  const visible = data.filter((item) => item.count > 0)
+  const series = visible.length ? visible : data
+  const maxValue = Math.max(...series.flatMap((item) => [Number(item.income) || 0, Number(item.expense) || 0]), 1)
+  const totalIncome = sumMoney(series, (item) => item.income)
+  const totalExpense = sumMoney(series, (item) => item.expense)
+
+  return (
+    <div className="dashboard-flow-shell">
+      <div className="dashboard-flow-summary">
+        <div><span>Receitas</span><strong className="positive">{money.format(totalIncome)}</strong></div>
+        <div><span>Despesas</span><strong className="negative">{money.format(totalExpense)}</strong></div>
+        <div><span>Resultado</span><strong className={totalIncome - totalExpense >= 0 ? 'positive' : 'negative'}>{money.format(fromCents(toCents(totalIncome) - toCents(totalExpense)))}</strong></div>
+      </div>
+      <div className="mini-grouped-chart" role="img" aria-label="Comparação mensal de receitas e despesas">
+        {series.map((item) => (
+          <div className="mini-grouped-column" key={item.key}>
+            <div className="mini-grouped-stage">
+              <i className="mini-grouped-bar income" style={{ height: `${Math.max(item.income ? 6 : 0, (item.income / maxValue) * 100)}%` }} title={`Receitas: ${money.format(item.income)}`} />
+              <i className="mini-grouped-bar expense" style={{ height: `${Math.max(item.expense ? 6 : 0, (item.expense / maxValue) * 100)}%` }} title={`Despesas: ${money.format(item.expense)}`} />
+            </div>
+            <strong>{item.label}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="dashboard-flow-legend">
+        <span><i className="income" />Receitas</span>
+        <span><i className="expense" />Despesas</span>
+      </div>
+    </div>
+  )
+}
+
+function RunningBalanceChart({ data }) {
+  const visible = data.slice(-8)
+  const current = visible[visible.length - 1]
+  const previous = visible.length > 1 ? visible[visible.length - 2] : current
+  const lastDelta = fromCents(toCents(current?.balance || 0) - toCents(previous?.balance || 0))
+  const values = visible.map((item) => Number(item.balance) || 0)
+  const scale = buildSymmetricScale(values.length ? values : [0], 4)
+  const positionForValue = (value) => ((Number(value) - scale.min) / scale.range) * 100
+  const zeroBottom = positionForValue(0)
+
+  return (
+    <div className="balance-bars-shell detailed">
+      <div className="balance-bars-head detailed">
         <div>
           <span>Saldo atual</span>
           <strong className={(current?.balance || 0) >= 0 ? 'positive' : 'negative'}>
@@ -1727,230 +1824,119 @@ function RunningBalanceChart({ data }) {
           </strong>
         </div>
         {current?.type !== 'start' && (
-          <div className={`last-movement ${current?.type === 'income' ? 'income' : 'expense'}`}>
+          <div className={`balance-bars-badge ${current?.type === 'income' ? 'income' : 'expense'}`}>
             <span>{current?.type === 'income' ? '↗ Última renda' : '↘ Última despesa'}</span>
-            <strong>
-              {current?.type === 'income' ? '+' : '−'}{' '}
-              {money.format(Math.abs(current?.value || lastDelta))}
-            </strong>
+            <strong>{current?.type === 'income' ? '+' : '−'} {money.format(Math.abs(current?.value || lastDelta))}</strong>
             <small>{current?.description}</small>
           </div>
         )}
       </div>
-      <div className="running-chart-scroll">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          className="running-balance-chart"
-          role="img"
-          aria-label="Evolução do saldo acumulado a cada lançamento"
-        >
-          <defs>
-            <linearGradient id={`balanceArea-${signature.length}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--purple)" stopOpacity=".16" />
-              <stop offset="100%" stopColor="var(--purple)" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {gridValues.map((value, index) => {
-            const y = yForValue(value)
-            return (
-              <g key={`grid-${index}`}>
-                <line
-                  x1={padding.left}
-                  y1={y}
-                  x2={width - padding.right}
-                  y2={y}
-                  className="chart-grid-line"
-                />
-                <text
-                  x={padding.left - 8}
-                  y={y + 3}
-                  textAnchor="end"
-                  className="running-grid-label"
-                >
-                  {money.format(value)}
-                </text>
-              </g>
-            )
-          })}
-          {zeroY >= padding.top && zeroY <= height - padding.bottom && (
-            <line
-              x1={padding.left}
-              y1={zeroY}
-              x2={width - padding.right}
-              y2={zeroY}
-              className="balance-zero-line"
-            />
-          )}
-          {data.slice(1).map((item, index) => {
-            const prev = data[index]
-            const x1 = xForIndex(index)
-            const y1 = yForValue(prev.balance)
-            const x2 = xForIndex(index + 1)
-            const y2 = yForValue(item.balance)
-            return (
-              <line
-                key={`${signature}-segment-${item.id}`}
-                x1={x1}
-                y1={y1}
-                x2={x2}
-                y2={y2}
-                className={`balance-segment ${item.type}`}
-              />
-            )
-          })}
-          {data.map((item, index) => {
-            const x = xForIndex(index)
-            const y = yForValue(item.balance)
+      <div className="balance-bars-grid detailed" role="img" aria-label="Saldo acumulado em colunas verticais">
+        <div className="balance-y-axis detailed">
+          {scale.ticks.map((tick) => (
+            <span key={tick} style={{ bottom: `${positionForValue(tick)}%` }}>
+              {money.format(tick)}
+            </span>
+          ))}
+        </div>
+        <div className="balance-bars-area detailed">
+          <div className="balance-zero-line" style={{ bottom: `${zeroBottom}%` }} />
+          {visible.map((item, index) => {
+            const value = Number(item.balance) || 0
+            const barHeight = Math.max(Math.abs(positionForValue(value) - zeroBottom), 3)
+            const isPositive = value >= 0
             const date = parseDate(item.date)
             const label =
-              index === 0
-                ? 'Início'
-                : date
-                  ? date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-                  : '—'
+              index === 0 ? 'Início' : date ? date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'
             return (
-              <g key={`${signature}-point-${item.id}`}>
-                <circle
-                  cx={x}
-                  cy={y}
-                  r={index === data.length - 1 ? 6 : 4}
-                  className={`balance-point ${item.type}`}
-                >
-                  <title>
-                    {index === 0
-                      ? `Saldo inicial exibido: ${money.format(item.balance)}`
-                      : `${item.description}: ${item.type === 'income' ? '+' : '−'} ${money.format(item.value)} · Saldo ${money.format(item.balance)}`}
-                  </title>
-                </circle>
-                {(data.length <= 9 ||
-                  index === 0 ||
-                  index === data.length - 1 ||
-                  index % 2 === 0) && (
-                  <text x={x} y={height - 14} textAnchor="middle" className="chart-axis-label">
-                    {label}
-                  </text>
-                )}
-              </g>
+              <div className="balance-bar-column" key={item.id}>
+                <div className="balance-bar-stage">
+                  <div className="balance-bar-value-chip">{money.format(value)}</div>
+                  <i
+                    className={`balance-vertical-bar ${isPositive ? 'positive' : 'negative'} ${item.type === 'start' ? 'neutral' : ''}`}
+                    style={isPositive ? { height: `${barHeight}%`, bottom: `${zeroBottom}%` } : { height: `${barHeight}%`, top: `${100 - zeroBottom}%` }}
+                    title={
+                      index === 0
+                        ? `Saldo inicial exibido: ${money.format(value)}`
+                        : `${item.description}: ${item.type === 'income' ? '+' : '−'} ${money.format(item.value)} · Saldo ${money.format(value)}`
+                    }
+                  />
+                </div>
+                <strong>{label}</strong>
+                <small>{money.format(value)}</small>
+              </div>
             )
           })}
-        </svg>
+        </div>
       </div>
-      <div className="movement-legend">
-        <span>
-          <i className="income" />
-          Renda: saldo sobe
-        </span>
-        <span>
-          <i className="expense" />
-          Despesa: saldo cai
-        </span>
-        <span>
-          <i className="current" />
-          Ponto atual
-        </span>
+      <div className="balance-bars-legend">
+        <span><i className="positive" />Saldo positivo</span>
+        <span><i className="negative" />Saldo negativo</span>
+        <span><i className="neutral" />Ponto inicial</span>
       </div>
     </div>
   )
 }
 
 function CashFlowChart({ data }) {
-  const width = 560
-  const height = 240
-  const paddingX = 100
-  const paddingY = 22
-  const chartWidth = width - paddingX * 2
-  const chartHeight = height - paddingY * 2
-  const maxValue = Math.max(...data.flatMap((item) => [item.income, item.expense, 0]), 1)
-  const stepX = data.length > 1 ? chartWidth / (data.length - 1) : 0
-  const yForValue = (value) => height - paddingY - (value / maxValue) * chartHeight
-  const buildPath = (key) =>
-    data
-      .map(
-        (item, index) =>
-          `${index === 0 ? 'M' : 'L'} ${paddingX + index * stepX} ${yForValue(item[key])}`,
-      )
-      .join(' ')
-  const activeMonths = data.filter((item) => item.count > 0)
-  const incomePath = buildPath('income')
-  const expensePath = buildPath('expense')
-  const gridValues = [0, 0.25, 0.5, 0.75, 1].map((step) => maxValue * step)
+  const visible = data.filter((item) => item.count > 0)
+  const series = visible.length ? visible : data
+  const maxValue = Math.max(...series.flatMap((item) => [Number(item.income) || 0, Number(item.expense) || 0]), 1)
+  const activeMonths = series.filter((item) => item.count > 0)
 
   return (
     <div className="chart-shell">
       <div className="chart-legend">
-        <span>
-          <i className="income" />
-          Receitas
-        </span>
-        <span>
-          <i className="expense" />
-          Despesas
-        </span>
+        <span><i className="income" />Receitas</span>
+        <span><i className="expense" />Despesas</span>
       </div>
-      <div className="chart-stage line-chart-stage">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          className="line-chart"
-          role="img"
-          aria-label="Gráfico de receitas e despesas por mês"
-        >
-          {gridValues.map((value, index) => {
-            const y = yForValue(value)
-            return (
-              <g key={index}>
-                <line
-                  x1={paddingX}
-                  y1={y}
-                  x2={width - paddingX}
-                  y2={y}
-                  className="chart-grid-line"
-                />
-                <text x={2} y={y + 3} className="chart-grid-label">
-                  {money.format(value)}
-                </text>
-              </g>
-            )
-          })}
-          <path d={incomePath} className="chart-line income" />
-          <path d={expensePath} className="chart-line expense" />
-          {data.map((item, index) => {
-            const x = paddingX + index * stepX
-            return (
-              <g key={item.key}>
-                <circle cx={x} cy={yForValue(item.income)} r="4" className="chart-point income" />
-                <circle cx={x} cy={yForValue(item.expense)} r="4" className="chart-point expense" />
-                <text x={x} y={height - 4} textAnchor="middle" className="chart-axis-label">
-                  {item.label}
-                </text>
-              </g>
-            )
-          })}
-        </svg>
+      <div className="grouped-bar-chart clean-bars" role="img" aria-label="Receitas e despesas por mês em gráfico de colunas">
+        {series.map((item) => (
+          <div className="grouped-bar-column" key={item.key}>
+            <div className="grouped-bar-stage">
+              <i className="grouped-bar income" style={{ height: `${Math.max(item.income ? 6 : 0, (item.income / maxValue) * 100)}%` }} title={`Receitas: ${money.format(item.income)}`} />
+              <i className="grouped-bar expense" style={{ height: `${Math.max(item.expense ? 6 : 0, (item.expense / maxValue) * 100)}%` }} title={`Despesas: ${money.format(item.expense)}`} />
+            </div>
+            <span>{item.label}</span>
+          </div>
+        ))}
       </div>
       <div className="chart-summary-grid">
-        <div>
-          <span>Receitas no período</span>
-          <strong>{money.format(sumMoney(data, (item) => item.income))}</strong>
-        </div>
-        <div>
-          <span>Despesas no período</span>
-          <strong>{money.format(sumMoney(data, (item) => item.expense))}</strong>
-        </div>
-        <div>
-          <span>Melhor saldo mensal</span>
-          <strong>
-            {money.format(
-              activeMonths.length ? Math.max(...activeMonths.map((item) => item.balance)) : 0,
-            )}
-          </strong>
-        </div>
+        <div><span>Receitas no período</span><strong>{money.format(sumMoney(series, (item) => item.income))}</strong></div>
+        <div><span>Despesas no período</span><strong>{money.format(sumMoney(series, (item) => item.expense))}</strong></div>
+        <div><span>Melhor saldo mensal</span><strong>{money.format(activeMonths.length ? Math.max(...activeMonths.map((item) => item.balance)) : 0)}</strong></div>
       </div>
     </div>
   )
 }
 
+function CategoryRankingChart({ data, total }) {
+  const visible = data.slice(0, 6)
+  const maxValue = Math.max(...visible.map((item) => Number(item.value) || 0), 1)
+
+  return (
+    <div className="category-ranking" role="img" aria-label="Ranking de categorias por volume de despesas">
+      {visible.map((item, index) => {
+        const share = total > 0 ? (item.value / total) * 100 : 0
+        return (
+          <div className="category-ranking-row" key={item.label}>
+            <div className="category-ranking-top">
+              <span className="category-ranking-label">{index + 1}. {item.label}</span>
+              <strong>{money.format(item.value)}</strong>
+            </div>
+            <div className="category-ranking-track">
+              <i style={{ width: `${(item.value / maxValue) * 100}%` }} />
+            </div>
+            <small>{percentFmt.format(share)}% do total</small>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function DonutChart({ data, totalLabel, totalFormatter, valueFormatter, compact = false }) {
-  const palette = ['var(--purple)', '#6bc79f', '#4c83cb', '#ef8e62', '#e0649a', '#58b987']
+  const palette = chartPalette
   const total = sumMoney(data)
   const radius = compact ? 48 : 56
   const circumference = 2 * Math.PI * radius
@@ -1975,7 +1961,7 @@ function DonutChart({ data, totalLabel, totalFormatter, valueFormatter, compact 
                 r={radius}
                 className="donut-segment"
                 style={{
-                  stroke: palette[index % palette.length],
+                  stroke: item.color || palette[index % palette.length],
                   strokeDasharray: `${dash} ${circumference - dash}`,
                   strokeDashoffset: offset,
                 }}
@@ -1994,7 +1980,7 @@ function DonutChart({ data, totalLabel, totalFormatter, valueFormatter, compact 
           return (
             <div className="donut-legend-row" key={item.label}>
               <span>
-                <i style={{ background: palette[index % palette.length] }} />
+                <i style={{ background: item.color || palette[index % palette.length] }} />
                 {item.label}
               </span>
               <strong>{valueFormatter(item.value)}</strong>
@@ -2192,7 +2178,7 @@ function Transactions({ transactions, categories, setModal }) {
           ⌕
           <input
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => setSearch(capitalizeFirstLetter(event.target.value))}
             placeholder="Buscar por descrição ou categoria"
           />
         </div>
@@ -2345,6 +2331,7 @@ function TransactionTable({ items, compact = false, onEdit, onDelete }) {
 }
 
 function Goals({ goals, transactions, setModal }) {
+  const incomeSummary = useMemo(() => getMonthlyIncomeSummary(transactions), [transactions])
   const overdue = goals.filter(isGoalOverdue)
   const totalTarget = sumMoney(goals, (goal) => goal.target)
   const totalSaved = sumMoney(goals, (goal) =>
@@ -2428,6 +2415,7 @@ function Goals({ goals, transactions, setModal }) {
             <GoalCard
               key={goal.id}
               goal={goal}
+              incomeSummary={incomeSummary}
               onContribution={() => setModal({ type: 'contribution', goal })}
               onEdit={() => setModal({ type: 'goal', goal })}
               onDelete={() => setModal({ type: 'delete-goal', goal })}
@@ -2452,7 +2440,7 @@ function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
   const progress = goalProgress(goal)
   const status = goalStatus(goal)
   const days = daysUntil(goal.deadline)
-  const plan = getGoalMonthlyPlan(goal, incomeSummary)
+  const plan = getFixedGoalPlan(goal, incomeSummary)
 
   const saved = Number(goal.saved) || 0
   const target = Number(goal.target) || 0
@@ -2516,11 +2504,11 @@ function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
         <i style={{ width: `${progress}%` }} />
       </div>
 
-      <div className="goal-values"><div><span>Acumulado</span><strong>{money.format(saved)}</strong></div><div><span>Objetivo</span><strong>{money.format(target)}</strong></div></div>
-      <div className="goal-progress-info"><span>Progresso</span><strong>{formatProgress(progress)}</strong></div>
-      <div className="goal-progress-bar"><i style={{ width: `${progress}%` }} /></div>
-      <div className="goal-card-details"><div><span>Falta</span><strong>{money.format(remaining)}</strong></div><div><span>Prazo</span><strong>{goal.deadline && parseDate(goal.deadline) ? dateLongFmt.format(parseDate(goal.deadline)) : '—'}</strong></div></div>
-
+      <div className="goal-card-details">
+        <div>
+          <span>Falta</span>
+          <strong>{money.format(remaining)}</strong>
+        </div>
         <div>
           <span>Prazo</span>
           <strong>
@@ -2536,6 +2524,12 @@ function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
         <span>{deadlineText}</span>
       </div>
 
+      {status !== 'Concluída' && plan && !plan.overdue && (
+        <div className="goal-monthly-plan">
+          <div><span>Sugestão mensal inicial (fixa)</span><strong>{money.format(plan.monthly)}/mês</strong></div>
+          <small>Planejamento inicial: {plan.months} mês(es) · {plan.incomeShare === null ? 'Cadastre suas rendas para comparar' : `${plan.incomeShare.toFixed(1).replace('.', ',')}% da renda mensal média`}</small>
+        </div>
+      )}
       {status !== 'Concluída' && (
         <button className="btn primary goal-contribution-button" onClick={onContribution}>
           ＋ Adicionar aporte
@@ -2546,19 +2540,33 @@ function GoalCard({ goal, incomeSummary, onContribution, onEdit, onDelete }) {
 }
 
 function Categories({ categories, transactions, setModal }) {
+  const [selectedCategory, setSelectedCategory] = useState(null)
+  // Uma categoria excluída não pode manter o gráfico preso a um filtro antigo.
+  const activeCategory = categories.includes(selectedCategory) ? selectedCategory : null
   const expenseTransactions = transactions.filter((item) => item.type === 'expense')
   const totalExpenses = sumMoney(expenseTransactions)
   const data = categories
     .map((category, index) => {
       const items = expenseTransactions.filter((item) => item.category === category)
-      const total = sumMoney(items)
-      return { category, total, count: items.length, index }
+      return { category, total: sumMoney(items), count: items.length, index,
+        color: chartPalette[index % chartPalette.length] }
     })
     .sort((a, b) => b.total - a.total)
-  const chartData = data
-    .filter((item) => item.total > 0)
-    .slice(0, 5)
-    .map((item) => ({ label: item.category, value: item.total }))
+  const filteredExpenses = activeCategory
+    ? expenseTransactions.filter((item) => item.category === activeCategory)
+    : expenseTransactions
+  const filteredTotal = sumMoney(filteredExpenses)
+  // Ao selecionar, detalha as despesas da categoria por descrição.
+  const chartData = activeCategory
+    ? groupTransactionsByDescription(filteredExpenses).map((item, index) => ({
+        ...item, color: chartPalette[index % chartPalette.length],
+      }))
+    : data.filter((item) => item.total > 0).map((item) => ({
+        label: item.category, value: item.total, color: item.color,
+      }))
+  const maxCategoryChartValue = Math.max(0, ...chartData.map((item) => item.value))
+  const selectCategory = (category) =>
+    setSelectedCategory((current) => current === category ? null : category)
 
   return (
     <div className="page">
@@ -2566,22 +2574,20 @@ function Categories({ categories, transactions, setModal }) {
         <div>
           <span className="section-kicker">ORGANIZAÇÃO</span>
           <h2>Categorias</h2>
-          <p>
-            Entenda quais áreas concentram mais despesas e mantenha seus registros consistentes.
-          </p>
+          <p>Selecione uma categoria para ver apenas as despesas dela no gráfico.</p>
         </div>
         <button className="btn primary" onClick={() => setModal({ type: 'category' })}>
           ＋ Nova categoria
         </button>
       </section>
-      <section className="category-overview panel">
+      <section className="category-overview panel" aria-live="polite">
         <div>
-          <span>Total em despesas</span>
-          <strong>{money.format(totalExpenses)}</strong>
+          <span>{activeCategory ? `Total em ${activeCategory}` : 'Total em despesas'}</span>
+          <strong>{money.format(filteredTotal)}</strong>
         </div>
         <div>
-          <span>Categorias ativas</span>
-          <strong>{data.filter((item) => item.count > 0).length}</strong>
+          <span>{activeCategory ? 'Lançamentos na categoria' : 'Categorias ativas'}</span>
+          <strong>{activeCategory ? filteredExpenses.length : data.filter((item) => item.count > 0).length}</strong>
         </div>
         <div>
           <span>Categorias cadastradas</span>
@@ -2589,78 +2595,67 @@ function Categories({ categories, transactions, setModal }) {
         </div>
       </section>
 
+      <div className="category-filter-status">
+        <p className="category-click-hint" aria-live="polite">
+          {activeCategory ? `Filtro: ${activeCategory}. Clique novamente no cartão para remover.` : 'Exibindo todas as categorias. Clique em um cartão abaixo para filtrar.'}
+        </p>
+        {activeCategory && <button className="btn secondary" onClick={() => setSelectedCategory(null)}>Mostrar todas</button>}
+      </div>
       <section className="dashboard-grid dashboard-grid-charts page-charts-inline">
         <div className="panel chart-panel chart-panel-large">
           <PanelHeader
-            title="Categorias que mais pesam"
-            subtitle="Participação das principais despesas"
+            title={activeCategory ? `Despesas de ${activeCategory}` : 'Despesas por categoria'}
+            subtitle={activeCategory ? 'Valores agrupados pela descrição do lançamento' : 'Participação de todas as categorias com despesas'}
           />
           {chartData.length ? (
-            <DonutChart
-              data={chartData}
-              totalLabel="Despesas"
+            <DonutChart data={chartData} totalLabel="Despesas"
               totalFormatter={(value) => money.format(value)}
-              valueFormatter={(value) => money.format(value)}
-            />
+              valueFormatter={(value) => money.format(value)} />
           ) : (
-            <MiniEmpty text="Registre despesas para ver a participação de cada categoria." />
+            <MiniEmpty text={activeCategory ? 'Esta categoria ainda não possui despesas.' : 'Registre despesas para ver a participação de cada categoria.'} />
           )}
         </div>
         <div className="panel insight-panel">
-          <PanelHeader title="Leitura rápida" subtitle="Resumo proporcional das categorias" />
-          {data.some((item) => item.total > 0) ? (
+          <PanelHeader title="Leitura rápida" subtitle={activeCategory ? `Despesas de ${activeCategory}` : 'Resumo proporcional das categorias'} />
+          {chartData.length ? (
             <div className="category-bars">
-              {data
-                .filter((item) => item.total > 0)
-                .slice(0, 5)
-                .map(({ category, total }) => {
-                  const share = totalExpenses > 0 ? (total / totalExpenses) * 100 : 0
-                  return (
-                    <div className="category-bar-row" key={category}>
-                      <div>
-                        <strong>{category}</strong>
-                        <span>{money.format(total)}</span>
-                      </div>
-                      <div className="category-track">
-                        <i style={{ width: `${share}%` }} />
-                      </div>
-                    </div>
-                  )
-                })}
+              {chartData.map(({ label, value, color }) => {
+                const barHeight = maxCategoryChartValue > 0 ? (value / maxCategoryChartValue) * 100 : 0
+                return (
+                  <div className="category-bar-row" key={label}>
+                    <div><strong>{label}</strong><span>{money.format(value)}</span></div>
+                    <div className="category-track"><i style={{ height: `${barHeight}%`, background: color }} /></div>
+                  </div>
+                )
+              })}
             </div>
           ) : (
-            <MiniEmpty text="As categorias passam a ganhar comparação visual assim que houver despesas." />
+            <MiniEmpty text={activeCategory ? 'Nenhum lançamento nesta categoria.' : 'As categorias passam a ganhar comparação visual assim que houver despesas.'} />
           )}
         </div>
       </section>
 
       <div className="category-grid">
-        {data.map(({ category, total, count, index }) => {
+        {data.map(({ category, total, count, index, color }) => {
           const share = totalExpenses > 0 ? Math.round((total / totalExpenses) * 100) : 0
           return (
-            <article className="category-card" key={category}>
-              <span className={`category-symbol c${index % 5}`}>
-                {['⌂', '◉', '▤', '◆', '＋'][index % 5]}
-              </span>
-              <div className="category-card-main">
-                <div className="category-title-row">
-                  <h3>{category}</h3>
-                  <span>{share}%</span>
-                </div>
-                <p>
-                  {money.format(total)} · {count} lançamento{count !== 1 ? 's' : ''}
-                </p>
-                <div className="category-progress">
-                  <i style={{ width: `${share}%` }} />
-                </div>
-              </div>
-              <button
-                className="icon-button subtle danger"
-                title="Excluir categoria"
-                onClick={() => setModal({ type: 'delete-category', category })}
-              >
-                ×
+            <article className={`category-card category-card-filterable ${activeCategory === category ? 'selected' : ''}`}
+              key={category} style={{ '--category-color': color }}>
+              <button type="button" className="category-filter-button"
+                aria-label={`Filtrar categoria ${category}`} aria-pressed={activeCategory === category}
+                onClick={() => selectCategory(category)}>
+                <span className="category-symbol" style={{ color, background: `${color}18` }}>
+                  {['⌂', '◉', '▤', '◆', '＋'][index % 5]}
+                </span>
+                <span className="category-card-main">
+                  <span className="category-title-row"><span className="category-name">{category}</span><span style={{ color }}>{share}%</span></span>
+                  <span className="category-card-summary">{money.format(total)} · {count} lançamento{count !== 1 ? 's' : ''}</span>
+                  <span className="category-progress"><i style={{ width: `${share}%`, background: color }} /></span>
+                </span>
               </button>
+              <button type="button" className="icon-button subtle danger" title="Excluir categoria"
+                aria-label={`Excluir categoria ${category}`}
+                onClick={() => setModal({ type: 'delete-category', category })}>×</button>
             </article>
           )
         })}
@@ -2669,7 +2664,7 @@ function Categories({ categories, transactions, setModal }) {
   )
 }
 
-function Profile({ profile, onSave, onChangePassword, onExport, onReset, onLogout }) {
+function Profile({ profile, onSave, onChangePassword, onExport, onLogout }) {
   const [name, setName] = useState(profile.name)
   const [email, setEmail] = useState(profile.email)
   useEffect(() => {
@@ -2715,7 +2710,7 @@ function Profile({ profile, onSave, onChangePassword, onExport, onReset, onLogou
               subtitle="Esses dados identificam sua conta no CustosVision"
             />
             <Field label="Nome completo">
-              <input required value={name} onChange={(event) => setName(event.target.value)} />
+              <input required value={name} onChange={(event) => setName(capitalizeFirstLetter(event.target.value))} />
             </Field>
             <Field label="E-mail">
               <input
@@ -2764,15 +2759,6 @@ function Profile({ profile, onSave, onChangePassword, onExport, onReset, onLogou
               </div>
               <button className="btn secondary" onClick={onExport}>
                 ↓ Exportar
-              </button>
-            </div>
-            <div className="settings-row danger-row">
-              <div>
-                <strong>Redefinir dados financeiros</strong>
-                <p>Apaga lançamentos e metas desta conta, mantendo login e perfil.</p>
-              </div>
-              <button className="btn danger-outline" onClick={onReset}>
-                Redefinir
               </button>
             </div>
           </section>
@@ -2972,8 +2958,11 @@ function TransactionModal({ categories, initialType, transaction, onClose, onSub
           periodicity: 'Única',
         },
   )
-  const update = (event) =>
-    setForm((current) => ({ ...current, [event.target.name]: event.target.value }))
+  const update = (event) => {
+    const { name, value } = event.target
+    const nextValue = name === 'description' ? capitalizeFirstLetter(value) : value
+    setForm((current) => ({ ...current, [name]: nextValue }))
+  }
   const submit = (event) => {
     event.preventDefault()
     if (!form.description.trim() || toCents(form.value) <= 0) return
@@ -3074,7 +3063,7 @@ function TransactionModal({ categories, initialType, transaction, onClose, onSub
   )
 }
 
-function GoalModal({ goal, onClose, onSubmit }) {
+function GoalModal({ goal, incomeSummary, onClose, onSubmit }) {
   const [form, setForm] = useState(() =>
     goal
       ? {
@@ -3085,8 +3074,12 @@ function GoalModal({ goal, onClose, onSubmit }) {
         }
       : { name: '', target: '', saved: '', deadline: '' },
   )
-  const update = (event) =>
-    setForm((current) => ({ ...current, [event.target.name]: event.target.value }))
+  const update = (event) => {
+    const { name, value } = event.target
+    const nextValue = name === 'name' ? capitalizeFirstLetter(value) : value
+    setForm((current) => ({ ...current, [name]: nextValue }))
+  }
+  const plan = goal ? getFixedGoalPlan(goal, incomeSummary) : getGoalMonthlyPlan(form, incomeSummary)
   const submit = (event) => {
     event.preventDefault()
     if (!form.name.trim() || toCents(form.target) <= 0 || !form.deadline) return
@@ -3132,6 +3125,22 @@ function GoalModal({ goal, onClose, onSubmit }) {
           <span>Prazo</span>
           <input required type="date" name="deadline" value={form.deadline} onChange={update} />
         </label>
+        {plan && (
+          <div className="goal-plan-preview full-field" aria-live="polite">
+            <div className="goal-plan-preview-head">
+              <span>◎</span>
+              <div><strong>Planejamento da sua meta</strong><p>Sugestão fixada ao criar a meta, com base nas rendas e no prazo daquela data.</p></div>
+            </div>
+            <div className="goal-plan-preview-grid">
+              <div><span>Guardar por mês</span><strong>{money.format(plan.monthly)}</strong></div>
+              <div><span>Renda principal / mês</span><strong>{money.format(plan.principalAverage)}</strong></div>
+              <div><span>Renda extra / mês</span><strong>{money.format(plan.extraAverage)}</strong></div>
+            </div>
+            <p className="goal-plan-preview-note">
+              {plan.remaining === 0 ? 'Você já atingiu o valor desta meta.' : plan.overdue ? 'O prazo já passou. Escolha uma data futura para planejar os aportes.' : plan.incomeShare === null ? `Faltam ${money.format(plan.remaining)} em ${plan.months} mês(es). Cadastre rendas para analisar a proporção necessária.` : `Para juntar ${money.format(plan.remaining)} em ${plan.months} mês(es), reserve ${plan.incomeShare.toFixed(1).replace('.', ',')}% da sua renda mensal média. ${plan.incomeShare > 100 ? 'Atenção: o aporte supera suas rendas registradas. Considere ampliar o prazo ou ajustar a meta.' : 'Confira também suas despesas antes de assumir esse valor.'}`}
+            </p>
+          </div>
+        )}
         <div className="modal-actions full-field">
           <button type="button" className="btn secondary" onClick={onClose}>
             Cancelar
@@ -3311,7 +3320,7 @@ function CategoryModal({ onClose, onSubmit }) {
             required
             maxLength={70}
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => setName(capitalizeFirstLetter(event.target.value))}
             placeholder="Ex.: Assinaturas"
           />
         </label>
