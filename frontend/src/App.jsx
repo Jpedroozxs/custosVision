@@ -2564,7 +2564,6 @@ function Categories({ categories, transactions, setModal }) {
     : data.filter((item) => item.total > 0).map((item) => ({
         label: item.category, value: item.total, color: item.color,
       }))
-  const maxCategoryChartValue = Math.max(0, ...chartData.map((item) => item.value))
   const selectCategory = (category) =>
     setSelectedCategory((current) => current === category ? null : category)
 
@@ -2620,11 +2619,11 @@ function Categories({ categories, transactions, setModal }) {
           {chartData.length ? (
             <div className="category-bars">
               {chartData.map(({ label, value, color }) => {
-                const barHeight = maxCategoryChartValue > 0 ? (value / maxCategoryChartValue) * 100 : 0
+                const share = filteredTotal > 0 ? (value / filteredTotal) * 100 : 0
                 return (
                   <div className="category-bar-row" key={label}>
                     <div><strong>{label}</strong><span>{money.format(value)}</span></div>
-                    <div className="category-track"><i style={{ height: `${barHeight}%`, background: color }} /></div>
+                    <div className="category-track"><i style={{ width: `${share}%`, background: color }} /></div>
                   </div>
                 )
               })}
